@@ -919,3 +919,26 @@ def test_the_list_of_names_is_joined_in_the_pipelines_language():
         _many(off, acted, HomeSnapshot(entities=[]), lines)
         == "Turned off shelf und study table."
     )
+
+
+async def test_a_split_question_is_never_made_the_last_action(
+    hass, home, calls, mock_client
+):
+    mock_client.ask.return_value = named("light.kitchen", action="turn_off")
+    first = await turn(hass, "turn off the kitchen light")
+    calls.clear()
+
+    mock_client.ask.return_value = named(
+        "light.living_lamp",
+        action=c(
+            "get_state",
+            0.55,
+            {"get_state": 0.55, "get_temperature": 0.42, "turn_off": 0.03},
+        ),
+        shape=c("one"),
+        asked_state=c("on"),
+        same_again=NoulAnswer(noul=0.85),
+    )
+    await turn(hass, "is the living room lamp on", first.conversation_id)
+    assert calls == []
+    assert hass.states.get("light.living_lamp").state == "on"

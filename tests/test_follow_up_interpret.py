@@ -670,3 +670,119 @@ def test_a_brightness_turn_with_no_level_is_not_repeated():
     assert decision.follow_up is None
     assert decision.needs_level is False
     assert decision.intent_type != "HassLightSet"
+
+
+TURN_OFF_THE_CEILING = {
+    "devices": ("light.ceiling",),
+    "action": "turn_off",
+    "intent_type": "HassTurnOff",
+    "shape": None,
+    "asked_state": None,
+    "text": "turn off the ceiling",
+}
+
+
+def test_a_question_split_between_two_reads_is_not_a_repeat_of_a_command():
+    # Neither question is sure alone, but together they are: it is a question.
+    decision = interpret(
+        answers(
+            action=c(
+                "get_state",
+                0.55,
+                {"get_state": 0.55, "get_temperature": 0.42, "turn_off": 0.03},
+            ),
+            target_type=c("entity", 0.9),
+            entity=c("light.lamp", 1.0),
+            shape=c("one"),
+            asked_state=c("on"),
+            same_again=NoulAnswer(noul=0.85),
+        ),
+        "is the lamp on",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up is None
+    assert decision.intent_type == "HassGetState"
+    assert decision.slots["name"]["value"] == "Lamp"
+
+
+def test_an_unsure_uncued_question_is_not_a_repeat_of_a_command():
+    decision = interpret(
+        answers(
+            action=c("get_state", 0.5, {"get_state": 0.5, "turn_on": 0.3}),
+            target_type=c("entity", 0.9),
+            entity=c("light.lamp", 1.0),
+            shape=c("one"),
+            asked_state=c("on"),
+            same_again=NoulAnswer(noul=0.85),
+        ),
+        "is the lamp on",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up is None
+    assert decision.intent_type != "HassTurnOff"
+    assert decision.intent_type in ("HassGetState", None)
+
+
+def test_a_cued_repeat_of_a_command_read_as_an_unsure_question_still_repeats():
+    # "and the living room?" often leans to a question. With the cue and no sure
+    # question, it repeats the last command.
+    decision = interpret(
+        answers(
+            action=c("get_state", 0.4, {"get_state": 0.4, "turn_off": 0.35}),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.9),
+        ),
+        "and the living room?",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up == "same_again"
+    assert decision.intent_type == "HassTurnOff"
+    assert decision.slots["area"]["value"] == "Living Room"
+
+
+def test_a_cued_question_split_between_two_reads_is_not_a_repeat_of_a_command():
+    # The words open like a repeat, but the two question reads together are sure.
+    decision = interpret(
+        answers(
+            action=c(
+                "get_state",
+                0.55,
+                {"get_state": 0.55, "get_temperature": 0.42, "turn_off": 0.03},
+            ),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.9),
+        ),
+        "and the living room, is anything on?",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up is None
+    assert decision.intent_type != "HassTurnOff"
+
+
+def test_a_question_after_a_question_still_repeats_without_a_cue():
+    # Only a command is guarded: asking the last question again changes nothing.
+    decision = interpret(
+        answers(
+            action=c("get_state", 0.9),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.9),
+        ),
+        "how about the living room",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up == "same_again"
+    assert decision.intent_type == "HassGetState"
+    assert decision.asked_state == "on"

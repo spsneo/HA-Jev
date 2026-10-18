@@ -913,6 +913,20 @@ def interpret(
         ):
             follow_up = None
         elif (
+            last.action not in _QUESTIONS
+            and own is not None
+            and (
+                sum((own.probabilities or {}).get(a, 0.0) for a in _QUESTIONS)
+                >= min_confidence
+                or (own.choice in _QUESTIONS and not same_again_cue(text))
+            )
+        ):
+            # A question is never made into the last turn's command. A question
+            # split between two reads is sure as a question, as the action gate
+            # below reads it, and an unsure question with no "and the" in front
+            # leans the wrong way to be repeated as a command that changes things.
+            follow_up = None
+        elif (
             last.action in ACTIONS
             # A level the last turn never held cannot be repeated, and reading it
             # would be a second paid request for a level this sentence never said.
