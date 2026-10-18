@@ -1161,6 +1161,28 @@ async def test_the_assist_dialog_shows_why_jev_refused(hass, house, mock_client)
     assert result.response.response_type is ha_intent.IntentResponseType.ERROR
 
 
+async def test_the_assist_dialog_shows_a_follow_up(hass, house, mock_client):
+    mock_client.ask.return_value = build_response(**answer_set())
+    first, _, _ = await converse_in_a_pipeline(hass, "turn on the kitchen light")
+
+    mock_client.ask.return_value = build_response(
+        **answer_set(
+            action=ChoiceAnswer(choice="turn_off", probabilities={}, confidence=0.95),
+            target_type=ChoiceAnswer(choice=NONE, probabilities={}, confidence=0.9),
+            entity=ChoiceAnswer(choice=NONE, probabilities={}, confidence=0.9),
+            refers_back=NoulAnswer(noul=0.9),
+            same_again=NoulAnswer(noul=0.05),
+        )
+    )
+    _, deltas, _ = await converse_in_a_pipeline(
+        hass, "turn it off", first.conversation_id
+    )
+
+    shown = deltas[0]["thinking_content"]
+    assert "Follow-up: refers back to Kitchen light" in shown
+    assert "refers_back: 0.90" in shown
+
+
 async def test_a_command_outside_a_pipeline_still_answers(hass, house, mock_client):
     """No listener, as from conversation.process: nothing to show it to."""
     mock_client.ask.return_value = build_response(**answer_set())

@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal
@@ -75,6 +75,7 @@ from .interpret import (
     read_level,
     spoken_name,
 )
+from .memory import Memory, Turn
 from .payload import payload_bytes
 from .snapshot import HomeSnapshot, async_heard_in, async_snapshot
 
@@ -102,6 +103,14 @@ _FALLBACK = {
     "auth_failed": "TypeSafe rejected the API key. Check it in the Jev settings.",
     "unavailable": "TypeSafe did not answer. Try again in a moment.",
     "which_device": "Do you mean {first} or {second}?",
+    # Several remembered devices run one intent each, and Home Assistant has no
+    # sentence for a set it never saw whole.
+    "many_turned_on": "Turned on {names}.",
+    "many_turned_off": "Turned off {names}.",
+    "many_toggled": "Toggled {names}.",
+    "many_opening": "Opening {names}.",
+    "many_closing": "Closing {names}.",
+    "many_brightness": "Set {names} to {level}%.",
 }
 
 PARALLEL_UPDATES = 0
@@ -142,6 +151,8 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         self._attr_device_info = build_device_info(entry.entry_id, runtime)
         # Conversation id to the command waiting on its reply.
         self._pending: dict[str, _Pending] = {}
+        # Conversation id to what its last turn was about, for "turn them off".
+        self._memory = Memory()
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -194,6 +205,19 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
+        result = await self._handle(user_input, chat_log)
+        # Home Assistant passes on the id the caller sent, which is None or an
+        # expired one when a client starts a conversation, while the chat session
+        # holds the id that continues it. The reply carries that one, so the next
+        # sentence reaches the same memory.
+        result.conversation_id = chat_log.conversation_id
+        return result
+
+    async def _handle(
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+    ) -> conversation.ConversationResult:
         runtime: JevRuntimeData = self._entry.runtime_data
 
         runtime.usage.roll_over(dt_util.now().date())
@@ -211,8 +235,18 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         if not snapshot.entities:
             return await self._fall_back(user_input, "no entities are exposed to Assist")
 
-        questions = build_questions(user_input.text, snapshot, MAX_CONVERSATION_ENTITIES)
+        # The memory's bytes go into the same request and through the same budget
+        # check, and a conversation with nothing to follow asks what it asked before.
+        last = self._memory.get(chat_log.conversation_id)
+        questions = build_questions(
+            user_input.text,
+            snapshot,
+            MAX_CONVERSATION_ENTITIES,
+            follow_up=last is not None,
+        )
         state = snapshot.as_state() | {"command": user_input.text}
+        if last is not None:
+            state["last_turn"] = last.describe()
         response = await self._ask(user_input, state, questions)
         if isinstance(response, conversation.ConversationResult):
             return response
@@ -223,7 +257,18 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             snapshot,
             self._min_confidence,
             heard_in=heard_in,
+            last=last,
         )
+        followed: dict[str, Any] = {}
+        if last is not None:
+            followed = {
+                "last_said": last.text,
+                "remembered_names": [
+                    described.name
+                    for entity_id in decision.remembered
+                    if (described := snapshot.by_id(entity_id)) is not None
+                ],
+            }
         self._trace(
             chat_log,
             response,
@@ -232,6 +277,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 "exposed_entities": len(snapshot.entities),
                 "left_out_by_cap": snapshot.left_out,
                 **asdict(decision),
+                **followed,
             },
         )
 
@@ -241,7 +287,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 chat_log,
                 _Pending(user_input.text, response, snapshot, decision.candidates),
             )
-        return await self._act(user_input, chat_log, decision, user_input.text)
+        return await self._act(user_input, chat_log, decision, user_input.text, snapshot)
 
     async def _ask(
         self,
@@ -421,7 +467,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         decision = interpret(
             first, pending.text, snapshot, self._min_confidence, ask_back=False
         )
-        return await self._act(user_input, chat_log, decision, pending.text)
+        return await self._act(user_input, chat_log, decision, pending.text, snapshot)
 
     # --- a level said in words ---
 
@@ -460,10 +506,16 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         chat_log: conversation.ChatLog,
         decision: Interpretation,
         text: str,
+        snapshot: HomeSnapshot,
     ) -> conversation.ConversationResult:
         """Carry out one decision, or say why not."""
         if decision.already_satisfied is not None:
             name, settled = decision.already_satisfied
+            # "It is already on" is about that device, so "turn it off" can follow.
+            if decision.already_entity is not None and (
+                already := self.hass.states.get(decision.already_entity)
+            ):
+                self._remember(chat_log, decision, text, [already])
             return await self._speak(user_input, f"already_{settled}", name=name)
 
         if decision.needs_level:
@@ -494,7 +546,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
 
         assert decision.intent_type is not None
         try:
-            intent_response = await self._read_rooms(user_input, decision, text)
+            intent_response, acted = await self._run(user_input, decision, text)
         except ha_intent.MatchFailedError as err:
             # The model named something the intent layer could not find. That is a
             # miss, not a failure, so the fallback agent gets the sentence intact.
@@ -520,18 +572,25 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         # Loading our lines reads translations, so only a reply without a sentence of
         # its own loads them.
         language = user_input.language or self.hass.config.language
+        # The devices a status answer named. A satellite listens again after one,
+        # because "turn them off" is the likely next sentence.
+        about: list[State] = []
         if intent_response.response_type is ha_intent.IntentResponseType.QUERY_ANSWER:
             if (
                 decision.intent_type == ha_intent.INTENT_GET_STATE
                 and language_util.matches(language, {"en"})
                 and (
-                    spoken := _status_answer(
+                    short := _status_answer(
                         decision, intent_response, await self._status_lines(language)
                     )
                 )
                 is not None
             ):
+                spoken, about = short
                 intent_response.async_set_speech(spoken)
+                acted = about
+            else:
+                acted = list(intent_response.matched_states)
             await _speak_the_answer(
                 self.hass,
                 intent_response,
@@ -539,40 +598,97 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 language,
                 await self._lines(language),
             )
-        elif (
-            intent_response.response_type is ha_intent.IntentResponseType.ACTION_DONE
-            and not intent_response.speech
-        ):
-            spoken = await _render_action_answer(
-                self.hass, intent_response, decision.intent_type, decision.slots, language
-            )
-            intent_response.async_set_speech(
-                spoken or (await self._lines(language))["done"]
-            )
+        elif intent_response.response_type is ha_intent.IntentResponseType.ACTION_DONE:
+            spoken = None
+            if decision.each:
+                spoken = _many(decision, acted, snapshot, await self._lines(language))
+            elif not intent_response.speech:
+                spoken = (
+                    await _render_action_answer(
+                        self.hass,
+                        intent_response,
+                        decision.intent_type,
+                        decision.slots,
+                        language,
+                    )
+                    or (await self._lines(language))["done"]
+                )
+            if spoken is not None:
+                intent_response.async_set_speech(spoken)
+        self._remember(chat_log, decision, text, acted)
         return conversation.ConversationResult(
-            response=intent_response, conversation_id=user_input.conversation_id
+            response=intent_response,
+            conversation_id=chat_log.conversation_id,
+            continue_conversation=bool(about),
         )
 
-    async def _read_rooms(
+    def _remember(
+        self,
+        chat_log: conversation.ChatLog,
+        decision: Interpretation,
+        text: str,
+        devices: Sequence[State],
+    ) -> None:
+        """Keep what this turn was about, in place of the last one."""
+        domains = decision.slots.get("domain", {}).get("value") or [
+            state.domain for state in devices
+        ]
+        if decision.rooms:
+            where: tuple[str, ...] = tuple(decision.rooms)
+        elif "area" in decision.slots:
+            where = (decision.slots["area"]["value"],)
+        elif "floor" in decision.slots:
+            where = (decision.slots["floor"]["value"],)
+        else:
+            where = ()
+        self._memory.remember(
+            chat_log.conversation_id,
+            Turn(
+                text=text,
+                action=decision.action,
+                intent_type=decision.intent_type or ACTIONS.get(decision.action, ""),
+                domains=tuple(dict.fromkeys(domains)),
+                where=where,
+                everything=decision.targets_everything,
+                devices=tuple(state.entity_id for state in devices),
+                names=tuple(state.name for state in devices),
+                shape=decision.shape,
+                asked_state=decision.asked_state,
+            ),
+        )
+
+    async def _run(
         self,
         user_input: conversation.ConversationInput,
         decision: Interpretation,
         text: str,
-    ) -> ha_intent.IntentResponse:
-        """Run the intent, once per room when a state question names several.
+    ) -> tuple[ha_intent.IntentResponse, list[State]]:
+        """Run the intent: once per room a state question names, once per
+        remembered device, or once. Also the states it acted on.
 
-        Each room goes through Home Assistant's own intent, so its exposure check
-        still decides what is read. A room with nothing of the kind is left out,
-        and only when every room is empty does the miss go up to the caller.
+        Each run goes through Home Assistant's own intent, so its exposure check
+        still decides. A room with nothing of the kind is left out, as is a
+        remembered device that no longer matches or fails, and only when every run
+        misses does the error go up to the caller. A read skips only a miss.
         """
         assert decision.intent_type is not None
-        rooms: list[str | None] = [*decision.rooms] or [None]
+        if decision.each:
+            # Each device brings its own domain, and the rest (a brightness) is shared.
+            shared = {k: v for k, v in decision.slots.items() if k != "domain"}
+            runs = [shared | own for own in decision.each]
+        elif decision.rooms:
+            runs = [decision.slots | {"area": {"value": room}} for room in decision.rooms]
+        else:
+            runs = [decision.slots]
+        skipped: tuple[type[ha_intent.IntentError], ...] = (ha_intent.MatchFailedError,)
+        if decision.intent_type not in (
+            ha_intent.INTENT_GET_STATE,
+            ha_intent.INTENT_GET_TEMPERATURE,
+        ):
+            skipped = (ha_intent.MatchFailedError, ha_intent.IntentHandleError)
         responses: list[ha_intent.IntentResponse] = []
-        missed: ha_intent.MatchFailedError | None = None
-        for room in rooms:
-            slots = decision.slots
-            if room is not None:
-                slots = slots | {"area": {"value": room}}
+        missed: ha_intent.IntentError | None = None
+        for slots in runs:
             try:
                 responses.append(
                     await ha_intent.async_handle(
@@ -589,13 +705,23 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                         conversation_agent_id=user_input.agent_id,
                     )
                 )
-            except ha_intent.MatchFailedError as err:
-                if len(rooms) == 1:
+            except skipped as err:
+                if len(runs) == 1:
                     raise
                 missed = err
         if not responses:
             assert missed is not None
             raise missed
+        acted: dict[str, State] = {}
+        for response in responses:
+            done = {
+                target.id
+                for target in response.success_results
+                if target.type is ha_intent.IntentResponseTargetType.ENTITY
+            }
+            for state in response.matched_states:
+                if not done or state.entity_id in done:
+                    acted.setdefault(state.entity_id, state)
         first, *others = responses
         if others:
             matched = {s.entity_id: s for r in responses for s in r.matched_states}
@@ -606,7 +732,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 if s.entity_id not in matched
             }
             first.async_set_states(list(matched.values()), list(unmatched.values()))
-        return first
+        return first, list(acted.values())
 
     # --- the two ways out ---
 
@@ -727,6 +853,11 @@ def _reasoning(trace: Mapping[str, Any], response: JevResponse) -> str:
                 f"Status: {trace['shape']}, asked {trace.get('asked_state') or 'nothing'}"
                 f", cue {trace.get('shape_cue') or 'none'}, rooms {rooms}"
             )
+        if trace.get("follow_up") == "refers_back":
+            names = trace.get("remembered_names") or trace.get("remembered") or []
+            lines.append(f"Follow-up: refers back to {', '.join(names)}")
+        elif trace.get("follow_up") == "same_again":
+            lines.append(f'Follow-up: same again as "{trace.get("last_said", "")}"')
     for key, answer in response.answers.items():
         if isinstance(answer, ChoiceAnswer):
             ranked = sorted((answer.probabilities or {}).items(), key=lambda kv: -kv[1])[
@@ -1128,12 +1259,64 @@ _NOUNS = {
 }
 
 
+def _noun(domain: str, states: Sequence[State]) -> str | None:
+    """What these devices of one domain are called in a sentence, or None."""
+    noun = _NOUNS.get(domain)
+    if noun == "cover":
+        classes = {state.attributes.get(ATTR_DEVICE_CLASS) for state in states}
+        if len(classes) == 1 and isinstance(kind := classes.pop(), str):
+            noun = kind.replace("_", " ")
+    return noun
+
+
+def _many(
+    decision: Interpretation,
+    acted: Sequence[State],
+    snapshot: HomeSnapshot,
+    lines: Mapping[str, str],
+) -> str | None:
+    """The agent's own sentence for one action run on each remembered device.
+
+    None for an action it has no sentence for, which then says "Done.".
+    """
+    if not acted:
+        return None
+    covers = all(state.domain == "cover" for state in acted)
+    if decision.intent_type == "HassLightSet":
+        if "brightness" not in decision.slots:
+            return None
+        key = "many_brightness"
+    elif decision.action == "turn_on":
+        key = "many_opening" if covers else "many_turned_on"
+    elif decision.action == "turn_off":
+        key = "many_closing" if covers else "many_turned_off"
+    elif decision.action == "toggle":
+        key = "many_toggled"
+    else:
+        return None
+    rooms = {
+        described.area if (described := snapshot.by_id(state.entity_id)) else None
+        for state in acted
+    }
+    # One room in scope goes unsaid, as in a status answer: "shelf and study table".
+    area_names = [room] if len(rooms) == 1 and (room := rooms.pop()) else []
+    names = [
+        status.short_name(
+            state.name, area_names, _noun(state.domain, [state]) or state.domain
+        )
+        for state in acted
+    ]
+    level = decision.slots.get("brightness", {}).get("value", "")
+    return lines[key].format(names=status.spoken_list(names), level=level)
+
+
 def _status_answer(
     decision: Interpretation,
     response: ha_intent.IntentResponse,
     lines: Mapping[str, str],
-) -> str | None:
-    """The short answer to a state question, or None to keep the full list.
+) -> tuple[str, list[State]] | None:
+    """The short answer to a state question and the devices it is about, or None
+    to keep the full list.
 
     None for a question about one named device, for "what is the status", for a
     state Jev was not sure was asked, and for devices whose state has no yes or no
@@ -1156,19 +1339,18 @@ def _status_answer(
     domains = {state.domain for state in states} or set(
         decision.slots.get("domain", {}).get("value", [])
     )
-    if len(domains) != 1 or (noun := _NOUNS.get(domains.pop())) is None:
+    if len(domains) != 1 or (noun := _noun(domains.pop(), states)) is None:
         return None
-    if noun == "cover":
-        classes = {state.attributes.get(ATTR_DEVICE_CLASS) for state in states}
-        if len(classes) == 1 and isinstance(kind := classes.pop(), str):
-            noun = kind.replace("_", " ")
     if decision.rooms:
         rooms = decision.rooms
     elif "area" in decision.slots:
         rooms = [decision.slots["area"]["value"]]
     else:
         rooms = []
-    return status.answer(shape, asked, states, noun=noun, area_names=rooms, lines=lines)
+    return (
+        status.answer(shape, asked, states, noun=noun, area_names=rooms, lines=lines),
+        status.about(shape, asked, states),
+    )
 
 
 async def _speak_the_answer(
