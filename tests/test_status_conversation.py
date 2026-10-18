@@ -426,3 +426,19 @@ async def test_one_named_device_keeps_its_answer_whatever_the_shape(
     assert await say(hass, "is the kids room shelf light on") == (
         "Kids room shelf light is on"
     )
+
+
+async def test_the_sentences_come_from_the_translations(hass, home, mock_client):
+    """strings.json words the answer, so a wording change needs no code."""
+    from custom_components.jev import conversation as agent
+
+    real = agent.translation.async_get_translations
+
+    async def reworded(hass, language, category, integrations=None):
+        found = await real(hass, language, category, integrations)
+        return found | {"component.jev.common.status_any_yes": "Yep, {count}: {names}."}
+
+    mock_client.ask.return_value = build_response(**asked())
+    with patch.object(agent.translation, "async_get_translations", reworded):
+        spoken = await say(hass, "are any lights on in the kids room")
+    assert spoken.startswith("Yep, two: shelf and study table.")

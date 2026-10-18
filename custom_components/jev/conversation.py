@@ -524,7 +524,12 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             if (
                 decision.intent_type == ha_intent.INTENT_GET_STATE
                 and language_util.matches(language, {"en"})
-                and (spoken := _status_answer(decision, intent_response)) is not None
+                and (
+                    spoken := _status_answer(
+                        decision, intent_response, await self._status_lines(language)
+                    )
+                )
+                is not None
             ):
                 intent_response.async_set_speech(spoken)
             await _speak_the_answer(
@@ -670,6 +675,16 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 text = shipped.errors.get(name)
             lines[key] = text or ours.get(f"component.{DOMAIN}.common.{key}", fallback)
         return lines
+
+    async def _status_lines(self, language: str) -> dict[str, str]:
+        """The short answers' sentences, as strings.json words them."""
+        ours = await translation.async_get_translations(
+            self.hass, language, "common", [DOMAIN]
+        )
+        return {
+            key: ours.get(f"component.{DOMAIN}.common.{key}", text)
+            for key, text in status.LINES.items()
+        }
 
     async def _speak(
         self,
@@ -1114,7 +1129,9 @@ _NOUNS = {
 
 
 def _status_answer(
-    decision: Interpretation, response: ha_intent.IntentResponse
+    decision: Interpretation,
+    response: ha_intent.IntentResponse,
+    lines: Mapping[str, str],
 ) -> str | None:
     """The short answer to a state question, or None to keep the full list.
 
@@ -1151,7 +1168,7 @@ def _status_answer(
         rooms = [decision.slots["area"]["value"]]
     else:
         rooms = []
-    return status.answer(shape, asked, states, noun=noun, area_names=rooms)
+    return status.answer(shape, asked, states, noun=noun, area_names=rooms, lines=lines)
 
 
 async def _speak_the_answer(

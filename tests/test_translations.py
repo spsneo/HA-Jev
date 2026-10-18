@@ -97,6 +97,14 @@ def test_the_speech_fallbacks_match_the_english_strings():
         assert strings[key] == text, f"{key} drifted from strings.json"
 
 
+def test_the_status_sentences_match_the_english_strings():
+    from custom_components.jev.status import LINES
+
+    strings = json.loads((COMPONENT / "strings.json").read_text())["common"]
+    for key, text in LINES.items():
+        assert strings[key] == text, f"{key} drifted from strings.json"
+
+
 def test_every_language_carries_the_agent_speech():
     """A Dutch pipeline that answers in English is only half translated."""
     english = json.loads((COMPONENT / "strings.json").read_text())["common"]
