@@ -7,14 +7,15 @@ Conversation agent to **Jev**.
 
 ## What it does
 
-One sentence becomes one request carrying ten to thirteen questions. Ten are always
-there: what should happen, is it compound, does it need text written, is it for
-another time or on a condition, is it a position part of the way, does it leave
+One sentence becomes one request carrying twelve to fifteen questions. Twelve are
+always there: what should happen, is it compound, does it need text written, is it
+for another time or on a condition, is it a position part of the way, does it leave
 something out, does it say how bright, does it name several devices by part of
-their names, how is the target named, which entity. Which room is added when you
-have rooms holding exposed entities, which floor when those rooms are on floors, and
-which kind of device when the exposed entities span two domains or more. A
-one-domain house with no areas is asked ten.
+their names, how is the target named, which entity, and for a question about the
+house, what shape of answer it asks for and which state it asks about. Which room is
+added when you have rooms holding exposed entities, which floor when those rooms are
+on floors, and which kind of device when the exposed entities span two domains or
+more. A one-domain house with no areas is asked twelve.
 
 All but one or two of those answers are discarded on any given sentence. That is the cheap
 shape, not waste: three questions measured 712 ms and a hundred measured 714, so
@@ -91,7 +92,7 @@ says "Done."
 | A lock or a garage, gate or door cover | Fallback. The agent never describes one |
 | An entity you did not expose to Assist | Never described to the model at all |
 | A hidden device named in full, next to an exposed one with a shorter name | Fallback. "Turn on the desk lamp" does not turn on "Lamp" |
-| No room and no device named | Refused, unless you allow it. `turn_off` is exempt. Below the confidence floor, fallback |
+| No room and no device named | Refused, unless you allow it. `turn_off` and state questions are exempt. Below the confidence floor, fallback |
 | Several devices named by part of their names, such as "turn off the lamps" | Fallback. Home Assistant's intents have no target for some of the lights, and every light is the wrong answer |
 | Two kinds of device, no kind named, whole house | Asks which kind. With one kind exposed, it acts on that kind |
 | Two devices whose names fit the command equally well | Asks which one, see below |
@@ -103,6 +104,40 @@ says "Done."
     which entities a voice assistant may touch, and a question is not a reason to
     widen that. This is the voice path only. The [actions](actions.md) send
     whatever an automation targets, exposed or not.
+
+## Status questions
+
+A question about a room, two rooms or the whole house gets one short sentence in an
+English pipeline. Jev says what shape of answer is asked for and which state the
+question is about, in the same request as the rest. The counting is done in Home
+Assistant afterwards, at no cost.
+
+| You ask | You hear |
+|---|---|
+| Are any lights on in the kids room? | Yes, two: shelf and study table. I can't reach the night lamp. |
+| Are all the study room curtains closed? | No. Main is 40% open. |
+| Which curtains are closed? | Study room sheer curtain is closed. |
+| How many fans are running? | Two fans are on. |
+| Are any lights on in the dining or living room? | Yes, one: living room lamp. |
+| Tell me the status of every light in the kids room | Every light and its state, as before |
+
+- A device that does not answer is named on its own and never counted as yes or no.
+- A curtain part of the way open counts as open, never as closed, and the answer
+  says how far.
+- A room with nothing of that kind is "I don't see any lights in the Kids Room",
+  not "No".
+- With one room in scope, names drop the room and the kind of device: "Kids Room
+  Shelf Light" is "shelf". With two rooms or the whole house, names stay whole.
+- A sentence that names two rooms is answered for both, when Jev's room is one of
+  them. A room's name inside a device name, such as "the study table", is not that
+  room.
+- Past four names, the answer names three and counts the rest.
+
+The full list stays for a question about one named device, for "the status of each",
+when Jev is not sure of the shape and the words do not say it ("how many", "which",
+"are all", "any", "status of"), when the state asked about does not fit the devices,
+and for questions about two kinds of device at once. Every language other than
+English keeps the full list too.
 
 ## A house with more than 150 exposed entities
 
@@ -185,7 +220,9 @@ how bright cost 19 more: 1,733 before and 1,752 after, with eleven entities expo
 The floor question cost 63 more on a house with two floors: 1,733 before and 1,796
 after, with eleven entities exposed. A house with no floors is not asked it. The
 question about devices named by part of their names cost 33 more: 1,733 before and
-1,766 after, with eleven entities exposed.
+1,766 after, with eleven entities exposed. The two status questions add 773 bytes to
+every command, measured locally; their cost in tokens has not been measured against
+the live API yet. See [measurements](measurements.md#the-two-status-questions).
 
 In a test of 22 sentences run twice, 11 of them things to refuse, 14 runs acted when
 they should not have before these two and 2 do now. Both are "turn off the lamps",

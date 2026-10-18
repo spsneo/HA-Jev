@@ -25,6 +25,8 @@ logger:
 | An error names a limit | It names your number too. 2 to 255 options, 2 to 10 levels, 250 entities |
 | Voice commands all go to the fallback | Check the traces in diagnostics. Each one records the reason |
 | Voice acts on the wrong device | The names and areas in your entity registry are what the model reads |
+| A status question says "Yes, two" when you wanted every device | Ask for "the status of each". The trace in diagnostics records the shape it read |
+| A status question lists every device when you wanted a short answer | The shape or the state was not sure enough. The trace records `shape`, `asked_state` and `shape_cue` |
 | A question you expected to batch went alone | Its target, template, schedule or triggers differ from the others. The preview says which |
 | An action says the target holds no entities | Every entity it names has no state, often because it was renamed or removed |
 | Home Assistant asks for a new API key | TypeSafe rejected the key. Setup, the questions, an action, an AI Task or a voice command can all start this |

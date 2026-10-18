@@ -36,7 +36,8 @@ Not affiliated with TypeSafe. The API client is
   the state, scaled to what the API takes. `jev.box` finds where something is in a
   picture.
 - A [conversation agent](https://jev.cdevries.dev/conversation/) for Assist routes
-  spoken commands through the same model.
+  spoken commands through the same model, and answers "are any lights on" or "which
+  curtains are closed" in one short sentence.
 - A [house check](https://jev.cdevries.dev/house-check/) opens a Repairs card for
   entities unavailable for a week, low batteries and, in one request, states that
   look like a mistake. A light left on can be turned off from its card and put back.
