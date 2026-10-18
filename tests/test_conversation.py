@@ -994,6 +994,54 @@ async def test_a_level_in_words_on_a_light_that_is_on_is_not_already_done(
     assert trace["reason"] == "action confidence 0.45 below 0.60"
 
 
+@pytest.mark.parametrize(
+    ("text", "shape", "asked_state", "expected"),
+    [
+        # A sure answer from the model wins over the words.
+        ("which lights are on", ("any", 0.9), ("on", 0.9), ("any", "on", "which")),
+        # An unsure one gives way to them.
+        ("how many lights are on", ("any", 0.5), ("on", 0.9), ("how_many", "on")),
+        ("tell me the status of each light", ("all", 0.5), ("none", 0.9), ("list",)),
+        ("are all the lights on", ("any", 0.5), ("on", 0.9), ("all", "on")),
+        ("is anything on", ("list", 0.5), ("on", 0.9), ("any", "on")),
+        # Neither sure: the full list, as before.
+        ("lights on in the office?", ("any", 0.5), ("on", 0.3), ("list", None)),
+    ],
+)
+async def test_a_state_question_records_its_shape(
+    hass, house, mock_client, text, shape, asked_state, expected
+):
+    mock_client.ask.return_value = build_response(
+        **answer_set(
+            action=ChoiceAnswer(choice="get_state", probabilities={}, confidence=0.95),
+            shape=ChoiceAnswer(choice=shape[0], probabilities={}, confidence=shape[1]),
+            asked_state=ChoiceAnswer(
+                choice=asked_state[0], probabilities={}, confidence=asked_state[1]
+            ),
+        )
+    )
+
+    await converse(hass, text)
+
+    questions = mock_client.ask.call_args.args[1]
+    assert {"shape", "asked_state"} <= set(questions)
+    trace = house.runtime_data.conversation_traces[0]
+    want_shape, *rest = expected
+    assert trace["shape"] == want_shape
+    if rest:
+        assert trace["asked_state"] == (rest[0] if rest[0] != "none" else None)
+    if len(rest) > 1:
+        assert trace["shape_cue"] == rest[1]
+
+
+async def test_a_command_records_no_shape(hass, house, mock_client):
+    mock_client.ask.return_value = build_response(**answer_set())
+    await converse(hass, "how many times do I have to say kitchen light on")
+    trace = house.runtime_data.conversation_traces[0]
+    assert trace["shape"] is None
+    assert trace["shape_cue"] is None
+
+
 async def test_a_trace_records_what_was_decided(hass, house, mock_client):
     """A misrouted sentence is only fixable if you can see what was made of it."""
     mock_client.ask.return_value = build_response(**answer_set())

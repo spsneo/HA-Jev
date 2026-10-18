@@ -125,6 +125,21 @@ Assist is then about 2,200 tokens, and the 150 entity cap is about 16,500, or $0
 at the published price. These are derived from a measured figure, not measured
 end to end: nobody has run a token count against the live API for this payload yet.
 
+### The two status questions
+
+Measured locally on 2026-10-18 with `payload_bytes`, no API call. The `shape` and
+`asked_state` questions add 773 bytes to every spoken command, whatever the house:
+
+| exposed entities | questions | without them | with them | added |
+|---|---|---|---|---|
+| 5 | 14 | 4,887 | 5,660 | 15.8% |
+| 20 | 14 | 7,341 | 8,114 | 10.5% |
+| 150 | 14 | 28,991 | 29,764 | 2.7% |
+
+They go in the one request rather than a second one, so a status question still
+costs one call. The tokens these bytes cost have not been measured against the live
+API, and neither has how often the shape answer is right.
+
 ## Which entities fit under the cap
 
 Measured locally on 2026-09-30, Apple M5 Pro, Python 3.14, with no API call. The

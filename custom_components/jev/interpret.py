@@ -440,6 +440,11 @@ class Interpretation:
     # A brightness command whose level was said in words. The agent asks for it
     # before it acts.
     needs_level: bool = False
+    # For a state question: the shape of answer asked for, the state it asks
+    # about, and the words in the sentence that settled the shape, if any did.
+    shape: str | None = None
+    asked_state: str | None = None
+    shape_cue: str | None = None
 
     @property
     def should_fall_back(self) -> bool:
@@ -452,6 +457,34 @@ class Interpretation:
 # lampes"), and "turn off the lamps" in a house with no lamp in any name 0.45 to
 # 0.54. The margin is 0.08, so this is a tripwire on the clear plurals only.
 PLURAL_FLOOR = 0.6
+
+# The shapes a state question's answer can take, and the states it can ask about.
+SHAPES = ("one", "any", "all", "which", "how_many", "list")
+ASKED_STATES = ("on", "off", "open", "closed", "locked", "unlocked")
+# Below this the words of the sentence decide the shape, and with no telling words
+# the answer is the full list, which is what every state question said before.
+# Not measured: no calibration run has been made for the shape question yet. It
+# sits above the action floor because a wrong shape gives a confident wrong
+# sentence, where the full list is only longer.
+SHAPE_FLOOR = 0.8
+# English words that name the shape. Only an English pipeline speaks the short
+# answers, so other languages need none. The order is the order they are tried:
+# "how many" before "which", and "the status of each" before "are all".
+_SHAPE_CUES = (
+    ("how_many", re.compile(r"\bhow many\b", re.IGNORECASE)),
+    ("which", re.compile(r"\bwhich\b", re.IGNORECASE)),
+    ("list", re.compile(r"\b(?:status|list|each)\b", re.IGNORECASE)),
+    ("all", re.compile(r"\b(?:are|is) (?:all|every)\b|\beverything\b", re.IGNORECASE)),
+    ("any", re.compile(r"\bany(?:thing)?\b", re.IGNORECASE)),
+)
+
+
+def shape_cue(text: str) -> str | None:
+    """The shape the sentence's own words ask for, or None."""
+    for shape, words in _SHAPE_CUES:
+        if words.search(text):
+            return shape
+    return None
 
 
 def build_questions(
@@ -622,6 +655,25 @@ def build_questions(
             }
             | {NONE: "No floor is named"},
         )
+    # The two below shape the answer to a state question. They go in every request
+    # rather than a second one, because a second request is a second bill. They add
+    # 773 bytes to every request, measured locally (docs/measurements.md).
+    questions["shape"] = Choice(
+        "If this is a question about the house, what kind of answer does it ask for?",
+        {
+            "one": "Whether one named device is in a state, or what its state is",
+            "any": "Whether any device of a group is in a state",
+            "all": "Whether every device of a group is in a state",
+            "which": "Which devices of a group are in a state",
+            "how_many": "How many devices of a group are in a state",
+            "list": "The state of each device, or it is not a question",
+        },
+    )
+    questions["asked_state"] = Choice(
+        "If this is a question about the house, which state does it ask about?",
+        dict.fromkeys(ASKED_STATES)
+        | {"none": "No particular state, or it is not a question"},
+    )
     if len(snapshot.domains) >= 2:
         questions["domain"] = Choice(
             "Which kind of device is meant?",
@@ -948,6 +1000,17 @@ def interpret(
             needs_level = True
         slots["domain"] = {"value": ["light"]}
 
+    shape = asked_state = cue = None
+    if action.choice == "get_state":
+        shape, cue = _shape(choice("shape"), text)
+        about = choice("asked_state")
+        if (
+            about is not None
+            and about.choice in ASKED_STATES
+            and about.confidence >= min_confidence
+        ):
+            asked_state = about.choice
+
     return Interpretation(
         intent_type=intent_type,
         slots=slots,
@@ -958,7 +1021,26 @@ def interpret(
         fallback=False,
         targets_everything=targets_everything,
         needs_level=needs_level,
+        shape=shape,
+        asked_state=asked_state,
+        shape_cue=cue,
     )
+
+
+def _shape(answer: ChoiceAnswer | None, text: str) -> tuple[str, str | None]:
+    """The shape to answer in, and the cue found in the words, if any.
+
+    A sure answer from the model wins. Short of that the words of the sentence do,
+    and with neither the answer is the full list.
+    """
+    cue = shape_cue(text)
+    if (
+        answer is not None
+        and answer.choice in SHAPES
+        and answer.confidence >= SHAPE_FLOOR
+    ):
+        return answer.choice, cue
+    return cue or "list", cue
 
 
 def _temperature(
