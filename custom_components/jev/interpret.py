@@ -853,6 +853,17 @@ def interpret(
         # A device removed or no longer exposed since the last turn is dropped, and
         # with none left the sentence goes on as today.
         remembered = [e for d in last.devices if (e := snapshot.by_id(d)) is not None]
+        # A sentence that surely names a device of its own is not about the last
+        # turn's, whatever the follow-up answer says: acting on the remembered
+        # devices then is acting on ones the user did not mean.
+        own = response.answers.get("entity")
+        if (
+            isinstance(own, ChoiceAnswer)
+            and own.choice != NONE
+            and own.confidence >= min_confidence
+            and own.choice not in {e.entity_id for e in remembered}
+        ):
+            remembered = []
         if not remembered:
             follow_up = None
     elif follow_up == "same_again" and last is not None:
@@ -921,6 +932,8 @@ def interpret(
                 already_satisfied=settled[:2],
                 action_probabilities=dict(action.probabilities or {}),
                 already_entity=settled[2],
+                follow_up=follow_up,
+                remembered=[e.entity_id for e in remembered],
             )
         return out(
             f"action confidence {action.confidence:.2f} below {min_confidence:.2f}"
@@ -1013,8 +1026,9 @@ def interpret(
     if remembered and last is not None:
         # The remembered devices, by the same slots a named device gets, so every
         # rule below applies to them as to a name. The whole-house gate decides on
-        # a house-wide set as it would for "turn everything on".
-        targets_everything = last.everything
+        # a house-wide set as it would for "turn everything on". One device left
+        # of it is a named device, not an unbounded action.
+        targets_everything = last.everything and len(remembered) >= 2
         if len(remembered) == 1:
             described = remembered[0]
         else:
@@ -1205,9 +1219,12 @@ def interpret(
 def _follow_up_floor(cued: bool, min_confidence: float) -> float:
     """The floor a follow-up answer needs: lower when the words cue it.
 
-    A cue lowers the floor to the agent's own and never raises it.
+    A cue lowers the floor to the agent's own and never raises it. Without one, a
+    user who set a floor stricter than FOLLOW_UP_FLOOR keeps it.
     """
-    return min(min_confidence, FOLLOW_UP_FLOOR) if cued else FOLLOW_UP_FLOOR
+    if cued:
+        return min(min_confidence, FOLLOW_UP_FLOOR)
+    return max(min_confidence, FOLLOW_UP_FLOOR)
 
 
 def _a_sure_target(response: JevResponse, min_confidence: float) -> bool:

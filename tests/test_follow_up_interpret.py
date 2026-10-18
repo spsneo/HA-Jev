@@ -162,6 +162,8 @@ def test_it_when_it_is_already_so_says_so():
     )
     assert decision.already_satisfied == ("Shelf", "on")
     assert decision.already_entity == "light.shelf"
+    assert decision.follow_up == "refers_back"
+    assert decision.remembered == ["light.shelf"]
 
 
 def test_them_with_an_unsure_action_is_refused():
@@ -375,3 +377,70 @@ def test_and_the_living_room_for_a_temperature_repeats_it():
     assert decision.intent_type == "HassClimateGetTemperature"
     assert decision.slots == {"area": {"value": "Living Room"}}
     assert decision.follow_up == "same_again"
+
+
+def test_a_sentence_naming_its_own_device_is_not_a_follow_up():
+    # "turn off the ceiling light" with a stray refers_back answer: the sure entity
+    # answer names a device the last turn was not about.
+    decision = interpret(
+        answers(
+            refers_back=NoulAnswer(noul=0.9),
+            target_type=c("entity", 0.95),
+            entity=c("light.ceiling", 0.95),
+        ),
+        "turn that ceiling light off",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up is None
+    assert decision.remembered == []
+    assert decision.slots["name"]["value"] == "Ceiling"
+
+
+def test_a_sure_entity_among_the_remembered_keeps_the_follow_up():
+    decision = interpret(
+        answers(
+            refers_back=NoulAnswer(noul=0.9),
+            target_type=c("entity", 0.95),
+            entity=c("light.shelf", 0.95),
+        ),
+        "turn them off",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up == "refers_back"
+    assert decision.remembered == ["light.shelf", "light.study_table"]
+
+
+def test_a_stricter_floor_holds_for_an_uncued_follow_up():
+    strict = 0.9
+    uncued = interpret(
+        answers(refers_back=NoulAnswer(noul=0.85)),
+        "switch the lot off",
+        SNAPSHOT,
+        strict,
+        last=turn(),
+    )
+    assert uncued.follow_up is None
+    cued = interpret(
+        answers(refers_back=NoulAnswer(noul=0.85)),
+        "turn them off",
+        SNAPSHOT,
+        strict,
+        last=turn(),
+    )
+    assert cued.follow_up == "refers_back"
+
+
+def test_one_device_left_of_a_house_wide_turn_is_not_the_whole_house():
+    decision = interpret(
+        answers(refers_back=NoulAnswer(noul=0.9)),
+        "turn it off",
+        SNAPSHOT,
+        MIN,
+        last=turn(devices=("light.shelf", "light.gone"), everything=True, where=()),
+    )
+    assert decision.follow_up == "refers_back"
+    assert decision.targets_everything is False
