@@ -499,8 +499,13 @@ FOLLOW_UP_FLOOR = 0.8
 # English words that point back or ask again. A cue never acts alone: it only lets
 # an answer between the agent's floor and FOLLOW_UP_FLOOR count.
 _REFERS_BACK_CUE = re.compile(
-    r"\b(?:it|them|those|they|that one|these|both)\b", re.IGNORECASE
+    r"\b(?:it|them|those|they|that|these|both)\b", re.IGNORECASE
 )
+# English words that point away from the last turn's devices. "Turn off the others"
+# means the devices the last turn was not about, so the remembered set is the
+# opposite of what was meant. Unlike a cue, this decides alone: a refers_back is
+# not used, whatever its answer.
+_NEGATIVE_CUE = re.compile(r"\b(?:other|others|rest|remaining|except)\b", re.IGNORECASE)
 _SAME_AGAIN_CUE = re.compile(
     r"^\s*(?:and (?:in |for )?the|same for|what about the)\b", re.IGNORECASE
 )
@@ -509,6 +514,11 @@ _SAME_AGAIN_CUE = re.compile(
 def refers_back_cue(text: str) -> bool:
     """Whether the words point back to something already said."""
     return _REFERS_BACK_CUE.search(text) is not None
+
+
+def negative_cue(text: str) -> bool:
+    """Whether the words point away from what was already said: "the others"."""
+    return _NEGATIVE_CUE.search(text) is not None
 
 
 def same_again_cue(text: str) -> bool:
@@ -842,7 +852,7 @@ def interpret(
     if last is not None:
         back = noul("refers_back") >= _follow_up_floor(
             refers_back_cue(text), min_confidence
-        )
+        ) and not negative_cue(text)
         again = noul("same_again") >= _follow_up_floor(
             same_again_cue(text), min_confidence
         )
@@ -877,13 +887,32 @@ def interpret(
             for e in remembered
         ):
             remembered = []
+        # And for a kind of device: "turn off the fan" after a question about the
+        # lights means a fan, and acting on the lights is acting on the wrong ones.
+        kind_said = choice("domain")
+        if _sure(kind_said, min_confidence) and not any(
+            e.domain == kind_said.choice for e in remembered
+        ):
+            remembered = []
         if not remembered:
             follow_up = None
     elif follow_up == "same_again" and last is not None:
         # Read before the action gate, because "and the living room?" says no
         # action of its own and its action answer is a guess. The target still
         # comes from this sentence, and without a sure one it is not a repeat.
-        if last.action in ACTIONS and _a_sure_target(response, min_confidence):
+        # Read before the answers are replaced, because after that the action
+        # answer is the last turn's at 1.0. A sentence whose own action Jev is sure
+        # of, and which is another action, says what it wants: "is the lamp on"
+        # after "turn off the ceiling" is a question, and a repeat would switch the
+        # lamp off.
+        own = choice("action")
+        if (
+            _sure(own, min_confidence)
+            and own.choice != REPORT
+            and own.choice != last.action
+        ):
+            follow_up = None
+        elif last.action in ACTIONS and _a_sure_target(response, min_confidence):
             response = replace(response, answers=_repeated(response.answers, last))
         else:
             follow_up = None

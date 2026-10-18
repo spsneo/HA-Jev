@@ -810,3 +810,33 @@ async def test_the_fallback_agent_keeps_its_own_conversation(
         (first.conversation_id, first.conversation_id),
         (first.conversation_id, first.conversation_id),
     ]
+
+
+async def test_a_sure_question_is_never_made_the_last_action(
+    hass, home, calls, mock_client
+):
+    mock_client.ask.return_value = named("light.kitchen", action="turn_off")
+    first = await turn(hass, "turn off the kitchen light")
+    calls.clear()
+
+    mock_client.ask.return_value = named(
+        "light.living_lamp",
+        action=c("get_state", 0.97),
+        shape=c("one"),
+        asked_state=c("on"),
+        same_again=NoulAnswer(noul=0.85),
+    )
+    second = await turn(hass, "is the living room lamp on", first.conversation_id)
+    assert calls == []
+    assert hass.states.get("light.living_lamp").state == "on"
+    assert spoken(second) == "Living room lamp is on"
+
+
+async def test_turn_off_the_others_turns_off_nothing(hass, home, calls, mock_client):
+    mock_client.ask.return_value = asked()
+    first = await turn(hass, "which lights are on in the kids room")
+
+    mock_client.ask.return_value = follow(refers_back=NoulAnswer(noul=0.95))
+    second = await turn(hass, "turn off the others", first.conversation_id)
+    assert calls == []
+    assert spoken(second) == NOT_UNDERSTOOD

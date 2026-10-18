@@ -324,6 +324,7 @@ def test_already_done_names_its_entity():
 def test_the_cues():
     assert refers_back_cue("Turn them off")
     assert refers_back_cue("switch that one on")
+    assert refers_back_cue("turn that off")
     assert not refers_back_cue("turn the item off")
     assert same_again_cue("And the living room?")
     assert same_again_cue("and in the kitchen")
@@ -521,3 +522,90 @@ def test_a_sure_floor_holding_the_remembered_devices_keeps_the_follow_up():
     )
     assert decision.follow_up == "refers_back"
     assert decision.remembered == ["light.shelf", "light.study_table"]
+
+
+def test_a_sure_question_after_an_action_is_not_a_repeat():
+    # "turn off the ceiling" then "is the lamp on": Jev is sure of a question, so a
+    # same_again read of it must not make it the last turn's turn_off.
+    last = turn(
+        devices=("light.ceiling",),
+        action="turn_off",
+        intent_type="HassTurnOff",
+        shape=None,
+        asked_state=None,
+        text="turn off the ceiling",
+    )
+    decision = interpret(
+        answers(
+            action=c("get_state", 0.97),
+            target_type=c("entity", 0.9),
+            entity=c("light.lamp", 1.0),
+            shape=c("one"),
+            asked_state=c("on"),
+            same_again=NoulAnswer(noul=0.85),
+        ),
+        "is the lamp on",
+        SNAPSHOT,
+        MIN,
+        last=last,
+    )
+    assert decision.intent_type == "HassGetState"
+    assert decision.action == "get_state"
+    assert decision.follow_up is None
+    assert decision.slots["name"]["value"] == "Lamp"
+
+
+def test_a_sure_kind_no_remembered_device_has_is_not_a_follow_up():
+    # "turn off the fan" after a question about the lights is about a fan.
+    decision = interpret(
+        answers(
+            action=c("turn_off"),
+            domain=c("fan", 0.95),
+            refers_back=NoulAnswer(noul=0.85),
+        ),
+        "turn off the fan",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up is None
+    assert decision.remembered == []
+    assert decision.each == []
+
+
+def test_a_sure_kind_the_remembered_devices_have_keeps_the_follow_up():
+    decision = interpret(
+        answers(
+            action=c("turn_off"),
+            domain=c("light", 0.95),
+            refers_back=NoulAnswer(noul=0.85),
+        ),
+        "turn those lights off",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up == "refers_back"
+    assert decision.remembered == ["light.shelf", "light.study_table"]
+
+
+def test_the_others_is_not_the_remembered_devices():
+    # "the others" means the devices the last turn was not about, so acting on the
+    # remembered set would act on the opposite of what was meant.
+    for text in (
+        "turn off the others",
+        "turn the rest off",
+        "switch off the remaining ones",
+        "turn them all off except the shelf",
+        "turn off the other one",
+    ):
+        decision = interpret(
+            answers(action=c("turn_off"), refers_back=NoulAnswer(noul=0.95)),
+            text,
+            SNAPSHOT,
+            MIN,
+            last=turn(),
+        )
+        assert decision.follow_up is None, text
+        assert decision.remembered == [], text
+        assert decision.each == [], text
