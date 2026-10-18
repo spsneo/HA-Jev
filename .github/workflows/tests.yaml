@@ -40,6 +40,24 @@ jobs:
       - run: pytest --cov=custom_components.jev --cov-report=term-missing --cov-fail-under=96
       - run: coverage report --include='custom_components/jev/config_flow.py' --fail-under=100
 
+  pytest-next:
+    name: pytest (Home Assistant 2026.10)
+    runs-on: ubuntu-latest
+    # Not blocking yet. On 2026.10.2 five tests fail on 1.22.2 as released: three
+    # in test_llm.py, where a tool now returns a ToolResult rather than a dict, and
+    # two ask_before_acting runs in test_blueprints.py, whose mid-band notification
+    # is never sent. Make this blocking once they pass.
+    continue-on-error: true
+    env:
+      JEV_REQUIREMENTS: requirements-test-2026.10.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements-test-2026.10.txt
+      - run: pytest --no-cov
+
   mypy:
     name: mypy --strict
     runs-on: ubuntu-latest

@@ -1,0 +1,32 @@
+# The same pins as requirements-test.txt, for the Home Assistant release after the one
+# the suite is held to. pytest-homeassistant-custom-component 0.13.373 pins Home
+# Assistant 2026.10.2, and the conversation pins below are what its conversation
+# manifest pins. The 2026.10 job in tests.yaml installs this file and points
+# tests/test_manifest.py at it with JEV_REQUIREMENTS.
+pytest-homeassistant-custom-component==0.13.373
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pyyaml
+
+# The same version manifest.json pins, which is what Home Assistant installs for a
+# user. tests/test_manifest.py fails if these two ever disagree.
+jevclient==1.3.1
+
+# The conversation component's own requirements. Home Assistant installs these for a
+# user the moment a conversation agent exists; a test environment gets nothing
+# unless it is asked, and the failure is an ImportError at collection rather than a
+# failing assertion. The versions are exactly what
+# homeassistant/components/conversation/manifest.json pins, so the suite runs against
+# what a user runs. tests/test_manifest.py fails if they ever drift apart.
+gazetteer-matcher==1.1.0
+hassil==3.12.1
+home-assistant-intents==2026.10.6
+
+# The AI Task platform's chain. ai_task/task.py imports the camera component at
+# module level, and camera pins this. Without it every test that sets up an entry
+# fails at platform import with ModuleNotFoundError: No module named 'turbojpeg'.
+# The import alone needs no libturbojpeg on the machine: PyTurboJPEG looks for the
+# shared library when a TurboJPEG object is built, which nothing here does.
+# tests/test_manifest.py imports the chain, so a new pin in a later Home Assistant
+# fails there rather than in every other module.
+PyTurboJPEG==1.8.3

@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 import pathlib
 import re
 
@@ -10,6 +11,9 @@ import pytest
 
 ROOT = pathlib.Path(__file__).parent.parent
 MANIFEST = json.loads((ROOT / "custom_components/jev/manifest.json").read_text())
+# The pins this environment was installed from. The 2026.10 job in tests.yaml
+# installs requirements-test-2026.10.txt and names it here.
+REQUIREMENTS = ROOT / os.environ.get("JEV_REQUIREMENTS", "requirements-test.txt")
 
 
 def test_the_pinned_client_is_the_one_under_test():
@@ -74,11 +78,11 @@ def test_the_component_requirements_match_what_home_assistant_pins(component):
     required = set(component_manifest.get("requirements", []))
     ours = {
         line.strip()
-        for line in (ROOT / "requirements-test.txt").read_text().splitlines()
+        for line in REQUIREMENTS.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     }
     missing = required - ours
     assert not missing, (
-        f"requirements-test.txt is missing {sorted(missing)}, which the {component} "
+        f"{REQUIREMENTS.name} is missing {sorted(missing)}, which the {component} "
         f"component pins. CI will fail to import the platform that uses it."
     )
