@@ -161,8 +161,9 @@ a follow-up costs one call.
 How it works:
 
 - The memory belongs to one conversation: one satellite, or one Assist dialog.
-  Another satellite has none of it. It lasts five minutes from the last turn, the
-  time Home Assistant keeps a conversation open, and a restart clears it.
+  Another satellite has none of it. It lasts five minutes from the last turn that
+  acted or answered, the time Home Assistant keeps a conversation open. A turn sent
+  to the fallback agent does not restart the five minutes. A restart clears it.
 - The memory holds the devices the last answer was about: the ones an action changed,
   the ones a short status answer named, or every device a full list showed. A device
   you have since stopped exposing is left out.

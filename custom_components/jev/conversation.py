@@ -615,7 +615,9 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         elif intent_response.response_type is ha_intent.IntentResponseType.ACTION_DONE:
             spoken = None
             if decision.each:
-                spoken = _many(decision, acted, snapshot, await self._lines(language))
+                # The status lines carry "a and b", which the list of names needs.
+                lines = await self._status_lines(language) | await self._lines(language)
+                spoken = _many(decision, acted, snapshot, lines)
             elif not intent_response.speech:
                 spoken = (
                     await _render_action_answer(
@@ -1313,7 +1315,10 @@ def _many(
 ) -> str | None:
     """The agent's own sentence for one action run on each remembered device.
 
-    None for an action it has no sentence for, which then says "Done.".
+    lines holds the agent's lines and the status lines, which join the names.
+    None for an action it has no sentence for. The reply is then the one Home
+    Assistant's intent gave, and not "Done.", which only a reply with no sentence
+    of its own falls back to.
     """
     if not acted:
         return None
@@ -1343,7 +1348,7 @@ def _many(
         for state in acted
     ]
     level = decision.slots.get("brightness", {}).get("value", "")
-    return lines[key].format(names=status.spoken_list(names), level=level)
+    return lines[key].format(names=status.spoken_list(names, lines), level=level)
 
 
 def _status_answer(

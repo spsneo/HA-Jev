@@ -902,3 +902,20 @@ async def test_them_keeps_the_remembered_devices_inside_the_cap(
     assert len(offered) == 4
     assert touched(calls) == {"light.kids_shelf", "light.kids_study_table"}
     assert spoken(second) == "Turned off shelf and study table."
+
+
+def test_the_list_of_names_is_joined_in_the_pipelines_language():
+    from custom_components.jev.conversation import _FALLBACK, _many
+    from custom_components.jev.interpret import Interpretation
+    from custom_components.jev.snapshot import HomeSnapshot
+
+    acted = [
+        State("light.kids_shelf", "off", {"friendly_name": "Shelf"}),
+        State("light.kids_study_table", "off", {"friendly_name": "Study table"}),
+    ]
+    off = Interpretation("HassTurnOff", {}, "turn_off", 0.9, "ok", fallback=False)
+    lines = {**_FALLBACK, "status_and": "{first} und {last}"}
+    assert (
+        _many(off, acted, HomeSnapshot(entities=[]), lines)
+        == "Turned off shelf und study table."
+    )

@@ -28,7 +28,7 @@ logger:
 | A status question says "Yes, two" when you wanted every device | Ask for "the status of each". The trace in diagnostics records the shape it read |
 | A status question lists every device when you wanted a short answer | The shape or the state was not sure enough. The trace records `shape`, `asked_state` and `shape_cue` |
 | "Turn it off" after a simple command goes to the fallback | The pipeline handled the first command itself, so Jev has no record. Turn off Prefer handling commands locally |
-| A follow-up acts on nothing | More than five minutes passed, or another satellite heard it. The trace in diagnostics records `follow_up` |
+| A follow-up acts on nothing | More than five minutes passed since the last turn that acted or answered, or another satellite heard it. The trace in diagnostics records `follow_up` |
 | A question you expected to batch went alone | Its target, template, schedule or triggers differ from the others. The preview says which |
 | An action says the target holds no entities | Every entity it names has no state, often because it was renamed or removed |
 | Home Assistant asks for a new API key | TypeSafe rejected the key. Setup, the questions, an action, an AI Task or a voice command can all start this |
