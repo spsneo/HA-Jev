@@ -901,44 +901,29 @@ def interpret(
         # action of its own and its action answer is a guess. The target still
         # comes from this sentence, and without a sure one it is not a repeat.
         # Read before the answers are replaced, because after that the action
-        # answer is the last turn's at 1.0. A sentence whose own action Jev is sure
-        # of, and which is another action, says what it wants: "is the lamp on"
-        # after "turn off the ceiling" is a question, and a repeat would switch the
-        # lamp off.
+        # answer is the last turn's at 1.0.
         own = choice("action")
-        if not same_again_cue(text) and (own is None or own.choice != last.action):
+        if last.action not in _QUESTIONS:
+            # Only a question is repeated. A repeated command switches a device for
+            # whatever sentence reads as a repeat, and "is the lamp on" read unsure
+            # after "turn off the ceiling" switched the lamp off. How often Jev reads
+            # a question that way is unmeasured, so "and the office" after a command
+            # falls back, as it did before memory.
+            follow_up = None
+        elif not same_again_cue(text) and (own is None or own.choice != last.action):
             # With no "and the" in front, only the sentence's own top read can say
-            # it asks for the same again. "is the lamp on" read as nothing, or as
-            # nothing to do, would otherwise switch the lamp off after "turn off
-            # the ceiling", where without a memory it falls back.
+            # it asks for the same again.
             follow_up = None
         elif (
             _sure(own, min_confidence)
             and own.choice != REPORT
             and own.choice != last.action
         ):
+            # A sentence whose own action Jev is sure of, and which is another
+            # action, says what it wants: "turn off the office" after "is the lamp
+            # on" is a command, not a question about the office.
             follow_up = None
-        elif (
-            last.action not in _QUESTIONS
-            and own is not None
-            and (
-                sum((own.probabilities or {}).get(a, 0.0) for a in _QUESTIONS)
-                >= min_confidence
-                or (own.choice in _QUESTIONS and not same_again_cue(text))
-            )
-        ):
-            # A question is never made into the last turn's command. A question
-            # split between two reads is sure as a question, as the action gate
-            # below reads it, and an unsure question with no "and the" in front
-            # leans the wrong way to be repeated as a command that changes things.
-            follow_up = None
-        elif (
-            last.action in ACTIONS
-            # A level the last turn never held cannot be repeated, and reading it
-            # would be a second paid request for a level this sentence never said.
-            and not (last.action == "set_brightness" and last.level is None)
-            and _a_sure_target(response, min_confidence)
-        ):
+        elif _a_sure_target(response, min_confidence):
             response = replace(response, answers=_repeated(response.answers, last))
         else:
             follow_up = None
@@ -1228,9 +1213,6 @@ def interpret(
         slots["domain"] = {"value": ["light"]}
     if action.choice == "set_brightness":
         brightness = find_brightness(spoken)
-        if brightness is None and follow_up == "same_again" and last is not None:
-            # "and the living room" after "set the shelf to 40%" sets 40 there.
-            brightness = last.level
         if brightness is not None:
             slots["brightness"] = {"value": brightness}
         elif said_a_digit(spoken):

@@ -38,7 +38,7 @@ Not affiliated with TypeSafe. The API client is
 - A [conversation agent](https://jev.cdevries.dev/conversation/) for Assist routes
   spoken commands through the same model, answers "are any lights on" or "which
   curtains are closed" in one short sentence, and remembers the last turn that acted
-  or answered for five minutes so "turn them off" and "and the office" work.
+  or answered for five minutes so "turn them off" and "and the living room?" work.
 - A [house check](https://jev.cdevries.dev/house-check/) opens a Repairs card for
   entities unavailable for a week, low batteries and, in one request, states that
   look like a mistake. A light left on can be turned off from its card and put back.

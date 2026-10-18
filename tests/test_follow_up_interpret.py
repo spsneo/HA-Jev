@@ -611,67 +611,6 @@ def test_the_others_is_not_the_remembered_devices():
         assert decision.each == [], text
 
 
-def brightness_turn(level):
-    return turn(
-        devices=("light.shelf",),
-        action="set_brightness",
-        intent_type="HassLightSet",
-        shape=None,
-        asked_state=None,
-        text="set the shelf to 40%",
-        level=level,
-    )
-
-
-def and_the_living_room():
-    return answers(
-        action=c("turn_on", 0.4),
-        target_type=c("area", 0.9),
-        area=c("Living Room", 0.9),
-        same_again=NoulAnswer(noul=0.9),
-    )
-
-
-def test_and_the_living_room_sets_the_remembered_level():
-    decision = interpret(
-        and_the_living_room(),
-        "and the living room",
-        SNAPSHOT,
-        MIN,
-        last=brightness_turn(40),
-    )
-    assert decision.intent_type == "HassLightSet"
-    assert decision.follow_up == "same_again"
-    assert decision.slots["brightness"]["value"] == 40
-    assert decision.slots["area"]["value"] == "Living Room"
-    # No second request for a level the sentence never said.
-    assert decision.needs_level is False
-
-
-def test_a_level_said_again_wins_over_the_remembered_one():
-    decision = interpret(
-        and_the_living_room(),
-        "and the living room at 70%",
-        SNAPSHOT,
-        MIN,
-        last=brightness_turn(40),
-    )
-    assert decision.slots["brightness"]["value"] == 70
-
-
-def test_a_brightness_turn_with_no_level_is_not_repeated():
-    decision = interpret(
-        and_the_living_room(),
-        "and the living room",
-        SNAPSHOT,
-        MIN,
-        last=brightness_turn(None),
-    )
-    assert decision.follow_up is None
-    assert decision.needs_level is False
-    assert decision.intent_type != "HassLightSet"
-
-
 TURN_OFF_THE_CEILING = {
     "devices": ("light.ceiling",),
     "action": "turn_off",
@@ -725,26 +664,6 @@ def test_an_unsure_uncued_question_is_not_a_repeat_of_a_command():
     assert decision.follow_up is None
     assert decision.intent_type != "HassTurnOff"
     assert decision.intent_type in ("HassGetState", None)
-
-
-def test_a_cued_repeat_of_a_command_read_as_an_unsure_question_still_repeats():
-    # "and the living room?" often leans to a question. With the cue and no sure
-    # question, it repeats the last command.
-    decision = interpret(
-        answers(
-            action=c("get_state", 0.4, {"get_state": 0.4, "turn_off": 0.35}),
-            target_type=c("area", 0.9),
-            area=c("Living Room", 0.9),
-            same_again=NoulAnswer(noul=0.9),
-        ),
-        "and the living room?",
-        SNAPSHOT,
-        MIN,
-        last=turn(**TURN_OFF_THE_CEILING),
-    )
-    assert decision.follow_up == "same_again"
-    assert decision.intent_type == "HassTurnOff"
-    assert decision.slots["area"]["value"] == "Living Room"
 
 
 def test_a_cued_question_split_between_two_reads_is_not_a_repeat_of_a_command():
@@ -820,36 +739,43 @@ def test_an_uncued_sentence_whose_top_read_is_not_the_last_action_is_not_a_repea
         assert decision.intent_type != "HassTurnOff", action
 
 
-def test_an_uncued_sentence_whose_top_read_is_the_last_action_still_repeats():
-    decision = interpret(
-        answers(
-            action=c("turn_off", 0.5, {"turn_off": 0.5, "turn_on": 0.3}),
-            target_type=c("area", 0.9),
-            area=c("Living Room", 0.9),
-            same_again=NoulAnswer(noul=0.9),
+def test_a_command_is_never_repeated():
+    # Only a question is repeated: each of these read as the last command again,
+    # and "is the lamp on" read the same way switched the lamp off.
+    brightness = {
+        "devices": ("light.shelf",),
+        "action": "set_brightness",
+        "intent_type": "HassLightSet",
+        "shape": None,
+        "asked_state": None,
+        "text": "set the shelf to 40%",
+    }
+    for text, action, last in (
+        (
+            "and the living room?",
+            c("get_state", 0.4, {"get_state": 0.4, "turn_off": 0.35}),
+            TURN_OFF_THE_CEILING,
         ),
-        "the living room too",
-        SNAPSHOT,
-        MIN,
-        last=turn(**TURN_OFF_THE_CEILING),
-    )
-    assert decision.follow_up == "same_again"
-    assert decision.intent_type == "HassTurnOff"
-    assert decision.slots["area"]["value"] == "Living Room"
-
-
-def test_a_cued_fragment_with_no_action_of_its_own_still_repeats():
-    decision = interpret(
-        answers(
-            action=c("none_of_these", 0.6),
-            target_type=c("area", 0.9),
-            area=c("Living Room", 0.9),
-            same_again=NoulAnswer(noul=0.9),
+        (
+            "the living room too",
+            c("turn_off", 0.5, {"turn_off": 0.5, "turn_on": 0.3}),
+            TURN_OFF_THE_CEILING,
         ),
-        "and the living room",
-        SNAPSHOT,
-        MIN,
-        last=turn(**TURN_OFF_THE_CEILING),
-    )
-    assert decision.follow_up == "same_again"
-    assert decision.intent_type == "HassTurnOff"
+        ("and the living room", c("none_of_these", 0.6), TURN_OFF_THE_CEILING),
+        ("and the living room", c("turn_on", 0.4), brightness),
+    ):
+        decision = interpret(
+            answers(
+                action=action,
+                target_type=c("area", 0.9),
+                area=c("Living Room", 0.9),
+                same_again=NoulAnswer(noul=0.9),
+            ),
+            text,
+            SNAPSHOT,
+            MIN,
+            last=turn(**last),
+        )
+        assert decision.follow_up is None, text
+        assert decision.should_fall_back, text
+        assert decision.intent_type is None, text

@@ -144,7 +144,7 @@ English keeps the full list too.
 ## Follow-ups
 
 The agent remembers what the last turn was about, so the next sentence can say "them"
-or "and the office". Both are read in the same one request as any other sentence, so
+or "and the living room?". Both are read in the same one request as any other sentence, so
 a follow-up costs one call.
 
 | Turn 1 | Turn 2 | What happens |
@@ -153,8 +153,7 @@ a follow-up costs one call.
 | Turn on the kitchen light | Turn it off | The kitchen light turns off |
 | Turn on the kitchen light | Set it to 40% | The kitchen light goes to 40% |
 | Are any lights on in the kids room? "Yes, two: shelf and study table." | And the living room? | "Yes, one: lamp." The same question for the living room |
-| Turn off the lights in the kitchen | And the office | The office lights turn off |
-| Set the shelf to 40% | And the living room | The living room lights go to 40%, with no second request for the level |
+| Turn off the lights in the kitchen | And the office | Not a follow-up: a command is never repeated, so this goes on as if there were no memory |
 | Which curtains are closed? | Open it | The curtain the answer named opens |
 | Turn on the kitchen light | Is the office light on? | A new question, so the memory is not used |
 
@@ -170,11 +169,13 @@ How it works:
 - The two follow-up questions are sent only when there is a record, so a first
   sentence costs what it did. See
   [measurements](measurements.md#the-follow-up-questions).
-- "Them" takes the action from the new sentence. "And the office" takes the action
-  from the last one and the target from the new one. A repeat that does not open
-  with "and the", "same for" or "what about the" is used only when the new sentence
-  reads as the same action itself, and a question is never repeated as a command. A
-  sentence that reads as both, or as neither, is handled as if there were no memory.
+- "Them" takes the action from the new sentence. "And the living room?" takes the
+  question from the last turn and the target from the new one. Only a question is
+  repeated, because a repeat of a command would change a device whenever a question
+  was misread as one. A repeat that does not open with "and the", "same for" or
+  "what about the" is used only when the new sentence reads as the same question
+  itself. A sentence that reads as both, or as neither, is handled as if there were
+  no memory.
 - A room or floor you name that does not hold the remembered devices wins over the
   memory, and a sentence that names its own device is not a follow-up.
 - A fallback, a refusal and the question "which device" leave the memory as it was, so
@@ -186,7 +187,7 @@ How it works:
   "Follow-up: same again as ...", and the trace in diagnostics records `follow_up`.
 
 Not handled, and sent to the fallback agent as before: a relative change such as
-"make it brighter", "the others" and undo.
+"make it brighter", "the others", undo, and "and the office" after a command.
 
 !!! info "Turn off Prefer handling commands locally"
     Home Assistant answers a simple command such as "turn on the kitchen light" itself

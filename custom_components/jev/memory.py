@@ -38,9 +38,6 @@ class Turn:
     names: tuple[str, ...]
     shape: str | None = None
     asked_state: str | None = None
-    # The brightness a set_brightness turn set, so "and the living room" sets the
-    # same without a second request to read a level the sentence never said.
-    level: int | None = None
     at: datetime = field(default_factory=dt_util.utcnow)
 
     def describe(self) -> dict[str, Any]:

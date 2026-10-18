@@ -29,7 +29,7 @@ minutes of the last turn.
 | Turn on the kitchen light. → "Turned on the light" | Turn it off. | The kitchen light turns off. |
 | Turn on the kitchen light. | Set it to 40%. | The kitchen light goes to 40%. |
 | Are any lights on in the kids room? → "Yes, two: ..." | And the living room? | The same question, for the living room: "Yes, one: living room lamp." |
-| Turn off the lights in the kitchen. | And the office. | The office lights turn off. |
+| Turn off the lights in the kitchen. | And the office. | Changed before release (decided by the user, 2026-10-19): a command is not repeated, so this goes on as today. Only a question is repeated, because every way found to repeat a command let a misread question switch a device. |
 | Which curtains are closed? → "Study room sheer curtain is closed." | Open it. | That curtain opens. |
 | Turn on the kitchen light. | Is the office light on? | A new, unrelated question. Memory is not used. |
 
