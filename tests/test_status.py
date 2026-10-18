@@ -16,10 +16,12 @@ from homeassistant.core import State
 from custom_components.jev.status import (
     Bucket,
     Shape,
+    about,
     answer,
     classify,
     fits,
     short_name,
+    spoken_list,
 )
 
 
@@ -403,3 +405,45 @@ def test_the_wording_can_be_passed_in():
 )
 def test_the_asked_state_fits_the_devices(asked, states, expected):
     assert fits(asked, states) is expected
+
+
+def test_about_any_is_the_ones_on():
+    states = [
+        light("a", "on", "A"),
+        light("b", "off", "B"),
+        light("c", "unavailable", "C"),
+    ]
+    assert [s.entity_id for s in about(Shape.ANY, Bucket.ON, states)] == ["light.a"]
+
+
+def test_about_all_no_is_the_exceptions():
+    states = [window("w1", "off", "W1"), window("w2", "on", "W2")]
+    result = about(Shape.ALL, Bucket.CLOSED, states)
+    assert [s.entity_id for s in result] == ["binary_sensor.w2"]
+
+
+def test_about_all_yes_is_everything():
+    states = [window("w1", "off", "W1"), window("w2", "off", "W2")]
+    assert len(about(Shape.ALL, Bucket.CLOSED, states)) == 2
+
+
+def test_about_is_not_capped():
+    states = [light(f"l{i}", "on", f"Lamp {i}") for i in range(9)]
+    assert len(about(Shape.WHICH, Bucket.ON, states)) == 9
+
+
+def test_about_a_list_is_every_device():
+    states = [light("a", "on", "A"), light("b", "off", "B")]
+    assert len(about(Shape.LIST, None, states)) == 2
+
+
+def test_about_a_list_leaves_out_unreachable_devices():
+    states = [light("a", "on", "A"), light("b", "unavailable", "B")]
+    assert [s.entity_id for s in about(Shape.LIST, None, states)] == ["light.a"]
+
+
+def test_spoken_list():
+    assert spoken_list(["a"]) == "a"
+    assert spoken_list(["a", "b"]) == "a and b"
+    assert spoken_list(["a", "b", "c"]) == "a, b and c"
+    assert spoken_list([str(i) for i in range(6)]) == "0, 1, 2 and 3 more"

@@ -23,7 +23,7 @@ other language keeps the full list.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -216,6 +216,51 @@ def without_groups(states: Sequence[State]) -> list[State]:
     return [state for state in states if not is_covered_group(state)]
 
 
+def _split[T](
+    wanted: frozenset[Bucket], items: Sequence[T], bucket: Callable[[T], Bucket]
+) -> tuple[list[T], list[T], list[T]]:
+    """The unreachable, the yes and the no. One split, so a follow-up's "them"
+    can never be a different set from the one the answer counted."""
+    unknown = [i for i in items if bucket(i) is Bucket.UNKNOWN]
+    known = [i for i in items if bucket(i) is not Bucket.UNKNOWN]
+    return (
+        unknown,
+        [i for i in known if bucket(i) in wanted],
+        [i for i in known if bucket(i) not in wanted],
+    )
+
+
+def about(shape: Shape, asked: Bucket | None, states: Sequence[State]) -> list[State]:
+    """The devices a follow-up's "them" means after this status answer.
+
+    Not capped: the spoken answer stops at MAX_NAMES, and "turn them off" still
+    means every one. An unreachable device is never in it, because a command
+    sent to a device that cannot be read is a guess.
+    """
+    devices = without_groups(states)
+    reachable = [s for s in devices if classify(s).bucket is not Bucket.UNKNOWN]
+    if asked is None or asked not in ASKABLE or shape in (Shape.ONE, Shape.LIST):
+        return reachable
+    _, yes, no = _split(ASKABLE[asked], devices, lambda s: classify(s).bucket)
+    if shape is Shape.ALL:
+        # "Are all the windows closed" is no because of the ones that are not.
+        return no or yes
+    return yes
+
+
+def spoken_list(names: Sequence[str], lines: Mapping[str, str] | None = None) -> str:
+    """Names as one phrase: "a", "a and b", "a, b and c", "a, b, c and 6 more"."""
+    say = {**LINES, **(lines or {})}
+    if len(names) > MAX_NAMES:
+        shown = ", ".join(names[: MAX_NAMES - 1])
+        return say["status_and_more"].format(
+            names=shown, count=len(names) - MAX_NAMES + 1
+        )
+    if len(names) == 1:
+        return names[0]
+    return say["status_and"].format(first=", ".join(names[:-1]), last=names[-1])
+
+
 def short_name(name: str, area_names: Sequence[str], noun: str) -> str:
     """The name as it is said inside an answer, in lower case.
 
@@ -278,14 +323,7 @@ def answer(
     nouns = _plural(noun)
 
     def join(names: Sequence[str]) -> str:
-        if len(names) > MAX_NAMES:
-            shown = ", ".join(names[: MAX_NAMES - 1])
-            return say["status_and_more"].format(
-                names=shown, count=len(names) - MAX_NAMES + 1
-            )
-        if len(names) == 1:
-            return names[0]
-        return say["status_and"].format(first=", ".join(names[:-1]), last=names[-1])
+        return spoken_list(names, say)
 
     def word(device: _Device) -> str:
         reading = device.reading
@@ -319,16 +357,14 @@ def answer(
     assert asked is not None
     wanted = ASKABLE[asked]
     state = str(asked)
-    unknown = [d.name for d in devices if d.reading.bucket is Bucket.UNKNOWN]
-    known = [d for d in devices if d.reading.bucket is not Bucket.UNKNOWN]
-    yes = [d for d in known if d.reading.bucket in wanted]
-    no = [d for d in known if d.reading.bucket not in wanted]
+    unreachable_devices, yes, no = _split(wanted, devices, lambda d: d.reading.bucket)
+    unknown = [d.name for d in unreachable_devices]
     unreachable = say["status_unreachable"].format(names=join(unknown)) if unknown else ""
 
     def then_unreachable(sentence: str) -> str:
         return _capital(f"{sentence} {unreachable}".strip())
 
-    if not known:
+    if not yes and not no:
         return _capital(unreachable)
 
     if shape is Shape.ANY:
