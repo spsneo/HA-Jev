@@ -206,9 +206,10 @@ it is past the first 150 by entity_id. "Lights on in the snug" keeps the lights 
 area that has the alias "snug". When scores are equal, the entities in the room of the
 satellite that heard you come first, then the rest by entity_id. A command that names
 nothing in the house keeps the room that heard you and then the first by entity_id.
-A follow-up keeps the devices the last turn was about ahead of all of these, because
-"turn them off" shares no word with them. A device you have stopped exposing is not
-brought back.
+In a follow-up, the devices the last turn was about come right after the entities
+the command's words match and before everything else, because "turn them off" shares
+no word with them. A device you name still comes first. A device you have stopped
+exposing is not brought back.
 
 An entity that the cap leaves out is treated as hidden. If you name it and a
 shorter name fits an entity that was sent, the command goes to the fallback agent,

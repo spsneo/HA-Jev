@@ -210,9 +210,11 @@ def async_snapshot(
 
     When more are exposed than `limit`, the ones the command is most likely about
     are kept: see rank.py. Without a command, the first by entity_id are kept.
-    remembered are the entity ids a follow-up may act on. They are kept first,
-    because "turn them off" shares no word with the devices it means. They still
-    pass every filter above: an entity that is not exposed is never added.
+    remembered are the entity ids a follow-up may act on. They come after the
+    entities the command's words score and before the rest, because "turn them
+    off" shares no word with the devices it means, and a device the user names
+    now must not be pushed out by the memory. They still pass every filter
+    above: an entity that is not exposed is never added.
     """
     entities = er.async_get(hass)
     devices = dr.async_get(hass)
@@ -270,11 +272,7 @@ def async_snapshot(
     found.sort(key=lambda e: e.entity_id)
     left_out: list[ExposedEntity] = []
     if len(found) > limit:
-        ranked = _by_relevance(found, command, heard_in, areas, floors)
-        if remembered:
-            ranked = [e for e in ranked if e.entity_id in remembered] + [
-                e for e in ranked if e.entity_id not in remembered
-            ]
+        ranked = _by_relevance(found, command, heard_in, areas, floors, remembered)
         found, left_out = ranked[:limit], ranked[limit:]
         found.sort(key=lambda e: e.entity_id)
     hidden.extend(name for e in left_out for name in e.names)
@@ -340,6 +338,7 @@ def _by_relevance(
     heard_in: str | None,
     areas: ar.AreaRegistry,
     floors: fr.FloorRegistry,
+    remembered: Collection[str] = (),
 ) -> list[ExposedEntity]:
     """The entities in the order the cap keeps them: most likely meant first.
 
@@ -366,6 +365,9 @@ def _by_relevance(
         range(len(found)),
         key=lambda i: (
             -scores[i],
+            # Only among the entities the words do not reach, so a name said now
+            # still wins over the last turn's devices.
+            scores[i] <= 0 and found[i].entity_id not in remembered,
             heard_in is None or found[i].area_id != heard_in,
             found[i].entity_id,
         ),

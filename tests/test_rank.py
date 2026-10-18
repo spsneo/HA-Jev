@@ -129,3 +129,18 @@ async def test_a_remembered_device_no_longer_exposed_is_not_brought_back(hass, b
     )
     assert "light.zebra_lamp" not in kept(snapshot)
     assert "light.a08" in kept(snapshot)
+
+
+async def test_a_device_the_command_names_comes_before_the_remembered_ones(
+    hass, big_house
+):
+    """Five minutes of memory must not hide the zebra lamp the user names now."""
+    snapshot = async_snapshot(
+        hass,
+        3,
+        "turn on the zebra lamp",
+        remembered={"light.a01", "light.a02", "light.a03"},
+    )
+    assert "light.zebra_lamp" in kept(snapshot)
+    assert "Zebra lamp" not in snapshot.hidden_names
+    assert len(set(kept(snapshot)) & {"light.a01", "light.a02", "light.a03"}) == 2
