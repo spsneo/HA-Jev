@@ -171,8 +171,10 @@ How it works:
   sentence costs what it did. See
   [measurements](measurements.md#the-follow-up-questions).
 - "Them" takes the action from the new sentence. "And the office" takes the action
-  from the last one and the target from the new one. A sentence that reads as both,
-  or as neither, is handled as if there were no memory.
+  from the last one and the target from the new one. A repeat that does not open
+  with "and the", "same for" or "what about the" is used only when the new sentence
+  reads as the same action itself, and a question is never repeated as a command. A
+  sentence that reads as both, or as neither, is handled as if there were no memory.
 - A room or floor you name that does not hold the remembered devices wins over the
   memory, and a sentence that names its own device is not a follow-up.
 - A fallback, a refusal and the question "which device" leave the memory as it was, so

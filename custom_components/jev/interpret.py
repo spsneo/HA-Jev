@@ -906,7 +906,13 @@ def interpret(
         # after "turn off the ceiling" is a question, and a repeat would switch the
         # lamp off.
         own = choice("action")
-        if (
+        if not same_again_cue(text) and (own is None or own.choice != last.action):
+            # With no "and the" in front, only the sentence's own top read can say
+            # it asks for the same again. "is the lamp on" read as nothing, or as
+            # nothing to do, would otherwise switch the lamp off after "turn off
+            # the ceiling", where without a memory it falls back.
+            follow_up = None
+        elif (
             _sure(own, min_confidence)
             and own.choice != REPORT
             and own.choice != last.action

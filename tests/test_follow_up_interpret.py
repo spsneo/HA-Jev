@@ -786,3 +786,70 @@ def test_a_question_after_a_question_still_repeats_without_a_cue():
     assert decision.follow_up == "same_again"
     assert decision.intent_type == "HassGetState"
     assert decision.asked_state == "on"
+
+
+def is_the_lamp_on(action, **overrides):
+    fields = {
+        "target_type": c("entity", 0.9),
+        "entity": c("light.lamp", 1.0),
+        "shape": c("one"),
+        "asked_state": c("on"),
+        "same_again": NoulAnswer(noul=0.85),
+    }
+    fields.update(overrides)
+    response = answers(action=action, **fields)
+    if action is None:
+        response.answers.pop("action")
+    return interpret(
+        response, "is the lamp on", SNAPSHOT, MIN, last=turn(**TURN_OFF_THE_CEILING)
+    )
+
+
+def test_an_uncued_sentence_whose_top_read_is_not_the_last_action_is_not_a_repeat():
+    for action in (
+        c(
+            "none_of_these",
+            0.45,
+            {"none_of_these": 0.45, "get_state": 0.4, "turn_off": 0.15},
+        ),
+        c("report", 0.5, {"report": 0.5, "get_state": 0.4, "turn_off": 0.1}),
+        None,
+    ):
+        decision = is_the_lamp_on(action)
+        assert decision.follow_up is None, action
+        assert decision.intent_type != "HassTurnOff", action
+
+
+def test_an_uncued_sentence_whose_top_read_is_the_last_action_still_repeats():
+    decision = interpret(
+        answers(
+            action=c("turn_off", 0.5, {"turn_off": 0.5, "turn_on": 0.3}),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.9),
+        ),
+        "the living room too",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up == "same_again"
+    assert decision.intent_type == "HassTurnOff"
+    assert decision.slots["area"]["value"] == "Living Room"
+
+
+def test_a_cued_fragment_with_no_action_of_its_own_still_repeats():
+    decision = interpret(
+        answers(
+            action=c("none_of_these", 0.6),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.9),
+        ),
+        "and the living room",
+        SNAPSHOT,
+        MIN,
+        last=turn(**TURN_OFF_THE_CEILING),
+    )
+    assert decision.follow_up == "same_again"
+    assert decision.intent_type == "HassTurnOff"
