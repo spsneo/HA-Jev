@@ -38,8 +38,9 @@ from custom_components.jev.conversation import (
     _render_state_answer,
     _Shipped,
 )
-from custom_components.jev.interpret import NONE, find_brightness
+from custom_components.jev.interpret import NONE, areas_named, find_brightness
 from custom_components.jev.payload import payload_bytes
+from custom_components.jev.snapshot import HomeSnapshot
 
 from .conftest import PROBE_TOKENS, build_response
 
@@ -3103,3 +3104,57 @@ async def test_a_split_between_a_question_and_a_command_goes_out(
 
     trace = warm_house.runtime_data.conversation_traces[0]
     assert trace["reason"] == "action confidence 0.47 below 0.60"
+
+
+ROOMS = HomeSnapshot(
+    areas=["Dining Room", "Kids Room", "Living Room", "Study Room", "Office"],
+    area_aliases={"Office": ["den"]},
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("are any lights on in the kids room", ["Kids Room"]),
+        # A room's first word inside a device name is not the room.
+        ("is the study table light on in the kids room", ["Kids Room"]),
+        (
+            "are any lights on in the dining or living room",
+            ["Dining Room", "Living Room"],
+        ),
+        ("lights in the dining and the living room", ["Dining Room", "Living Room"]),
+        ("lights in the dining, living room", ["Dining Room", "Living Room"]),
+        ("the living room or the dining room", ["Living Room", "Dining Room"]),
+        # An alias names its room, as Home Assistant matches it.
+        ("is the light on in the den or the kids room", ["Office", "Kids Room"]),
+        # "study or" with no room after it in full is not the Study Room.
+        ("study or play lights in the kids room", ["Kids Room"]),
+        ("is the dining table lamp on", []),
+    ],
+)
+def test_the_rooms_a_sentence_names(text, expected):
+    assert areas_named(text, ROOMS) == expected
+
+
+async def test_a_second_room_is_kept_only_beside_jevs_own(hass, house, mock_client):
+    """The words can widen the answer to a second room, not move it."""
+    hall = ar.async_get(hass).async_get_or_create("Hall")
+    entry = er.async_get(hass).async_get_or_create(
+        "light", "demo", "hall", suggested_object_id="hall"
+    )
+    er.async_get(hass).async_update_entity(entry.entity_id, area_id=hall.id)
+    hass.states.async_set("light.hall", "off", {"friendly_name": "Hall light"})
+    async_expose_entity(hass, conversation.DOMAIN, "light.hall", True)
+    for room, expected in (("Office", ["Kitchen", "Office"]), ("Hall", [])):
+        mock_client.ask.return_value = build_response(
+            **answer_set(
+                action=ChoiceAnswer(
+                    choice="get_state", probabilities={}, confidence=0.95
+                ),
+                target_type=ChoiceAnswer(choice="area", probabilities={}, confidence=0.9),
+                entity=ChoiceAnswer(choice=NONE, probabilities={}, confidence=0.9),
+                area=ChoiceAnswer(choice=room, probabilities={}, confidence=0.9),
+            )
+        )
+        await converse(hass, "is a light on in the kitchen or office")
+        assert house.runtime_data.conversation_traces[0]["rooms"] == expected

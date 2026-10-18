@@ -445,6 +445,9 @@ class Interpretation:
     shape: str | None = None
     asked_state: str | None = None
     shape_cue: str | None = None
+    # Every room a state question names, when it names more than one. Jev's area
+    # question has one answer, and "the dining or living room" is two.
+    rooms: list[str] = field(default_factory=list)
 
     @property
     def should_fall_back(self) -> bool:
@@ -477,6 +480,49 @@ _SHAPE_CUES = (
     ("all", re.compile(r"\b(?:are|is) (?:all|every)\b|\beverything\b", re.IGNORECASE)),
     ("any", re.compile(r"\bany(?:thing)?\b", re.IGNORECASE)),
 )
+
+
+def areas_named(text: str, snapshot: HomeSnapshot) -> list[str]:
+    """The areas the sentence names, in the order it names them.
+
+    A name or alias counts only as whole words, so "the study table" is not the
+    Study Room. "the dining or living room" names the Dining Room by its first
+    word: a name's head counts when "or", "and" or a comma follows it and the rest
+    is another area named in full that ends in the same word.
+    """
+    spoken = " ".join(text.lower().split())
+    found: dict[str, int] = {}
+    whole: dict[str, str] = {}
+    for area in snapshot.areas:
+        for name in (area, *snapshot.area_aliases.get(area, ())):
+            name = " ".join(name.lower().split())
+            whole[name] = area
+            if (at := _find_words(spoken, name)) is not None:
+                found[area] = min(found.get(area, at), at)
+    for area in snapshot.areas:
+        if area in found:
+            continue
+        for name in (area, *snapshot.area_aliases.get(area, ())):
+            *head, tail = " ".join(name.lower().split()).split(" ")
+            if not head:
+                continue
+            shared = re.compile(
+                r"(?<!\w)"
+                + re.escape(" ".join(head))
+                + r"\s*(?:,|\s+or|\s+and)\s+(?:the\s+)?([\w ]+?\s+"
+                + re.escape(tail)
+                + r")(?!\w)"
+            )
+            for match in shared.finditer(spoken):
+                other = whole.get(match.group(1))
+                if other is not None and other != area and other in found:
+                    found[area] = min(found.get(area, match.start()), match.start())
+    return sorted(found, key=found.__getitem__)
+
+
+def _find_words(text: str, words: str) -> int | None:
+    match = re.search(r"(?<!\w)" + re.escape(words) + r"(?!\w)", text)
+    return match.start() if match else None
 
 
 def shape_cue(text: str) -> str | None:
@@ -1001,8 +1047,15 @@ def interpret(
         slots["domain"] = {"value": ["light"]}
 
     shape = asked_state = cue = None
+    rooms: list[str] = []
     if action.choice == "get_state":
         shape, cue = _shape(choice("shape"), text)
+        # Only alongside Jev's own room, so the text can widen the answer to a
+        # second room but never move it off the one Jev heard.
+        if "area" in slots:
+            named = areas_named(text, snapshot)
+            if len(named) >= 2 and slots["area"]["value"] in named:
+                rooms = named
         about = choice("asked_state")
         if (
             about is not None
@@ -1024,6 +1077,7 @@ def interpret(
         shape=shape,
         asked_state=asked_state,
         shape_cue=cue,
+        rooms=rooms,
     )
 
 
