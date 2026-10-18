@@ -369,6 +369,26 @@ async def test_whole_house_can_be_allowed(hass, house, mock_client):
     assert len(calls) >= 1
 
 
+async def test_a_whole_house_question_is_answered(hass, house, mock_client):
+    """The whole-house gate is for actions. A question changes nothing."""
+    mock_client.ask.return_value = build_response(
+        **answer_set(
+            action=ChoiceAnswer(choice="get_state", probabilities={}, confidence=0.95),
+            target_type=ChoiceAnswer(
+                choice="everything", probabilities={}, confidence=0.9
+            ),
+            entity=ChoiceAnswer(choice="none_of_these", probabilities={}, confidence=0.9),
+        )
+    )
+
+    result = await converse(hass, "which lights are on")
+
+    spoken = result.response.speech["plain"]["speech"]
+    assert "Kitchen light" in spoken
+    assert "Office light" in spoken
+    assert "Private" not in spoken
+
+
 async def test_a_free_text_request_goes_to_the_fallback_agent(hass, house, mock_client):
     hass.config_entries.async_update_entry(
         house, options={CONF_FALLBACK_AGENT: "conversation.home_assistant"}

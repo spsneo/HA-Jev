@@ -477,9 +477,14 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         # The whole-home gate. "Turn everything off" is a real command and a
         # harmless one. "Turn everything on" at 3am, from a sentence the model was
         # only somewhat sure about, is not something to do silently. Off is allowed
-        # because its worst case is a dark house; anything else asks first.
+        # because its worst case is a dark house; anything else asks first. A
+        # question changes nothing, so "which curtains are closed" is not asked back.
         if decision.targets_everything:
-            if not self._allow_whole_home and decision.action != "turn_off":
+            if (
+                not self._allow_whole_home
+                and decision.action != "turn_off"
+                and decision.intent_type != ha_intent.INTENT_GET_STATE
+            ):
                 return await self._speak(user_input, "whole_house")
             # Home Assistant refuses "all" with no kind of device beside it, and an
             # unbounded command is not something to infer from one sentence anyway.

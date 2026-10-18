@@ -868,7 +868,12 @@ def interpret(
         # "all" still needs a domain beside it. Home Assistant refuses a bare one
         # with "Service handler cannot target all devices", and it is right to: an
         # unbounded off is not something to infer from one ambiguous sentence.
-        slots["name"] = {"value": "all"}
+        #
+        # HassGetState is the exception: it matches "all" as a device name and
+        # finds nothing, and with no target it reads every exposed device of the
+        # domain, as it does for the default agent's "which lights are on".
+        if action.choice != "get_state":
+            slots["name"] = {"value": "all"}
         targets_everything = True
     elif (
         ask_back
