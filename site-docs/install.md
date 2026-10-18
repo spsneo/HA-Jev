@@ -124,6 +124,9 @@ open. Clearing the field goes back to `jev-latest`.
 | Act only above this confidence | 0.6 | Below it, a spoken command goes to the fallback |
 | Allow whole-house commands | off | Commands naming no room and no device. Turning everything off is always allowed |
 
+For [follow-ups](conversation.md#follow-ups) after a simple command such as "turn on the
+kitchen light", turn off **Prefer handling commands locally** in the pipeline that uses Jev.
+
 The budget is a [tripwire](cost.md#the-budget-is-a-tripwire), not a quota to run
 against. Put it past anything a working setup would use.
 

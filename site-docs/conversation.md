@@ -7,7 +7,8 @@ Conversation agent to **Jev**.
 
 ## What it does
 
-One sentence becomes one request carrying twelve to fifteen questions. Twelve are
+One sentence becomes one request carrying twelve to fifteen questions, and
+fourteen to seventeen when the conversation has a [follow-up](#follow-ups) to read. Twelve are
 always there: what should happen, is it compound, does it need text written, is it
 for another time or on a condition, is it a position part of the way, does it leave
 something out, does it say how bright, does it name several devices by part of
@@ -15,7 +16,8 @@ their names, how is the target named, which entity, and for a question about the
 house, what shape of answer it asks for and which state it asks about. Which room is
 added when you have rooms holding exposed entities, which floor when those rooms are
 on floors, and which kind of device when the exposed entities span two domains or
-more. A one-domain house with no areas is asked twelve.
+more. A one-domain house with no areas is asked twelve. With a record of the last turn, two
+more are asked, see [follow-ups](#follow-ups).
 
 All but one or two of those answers are discarded on any given sentence. That is the cheap
 shape, not waste: three questions measured 712 ms and a hundred measured 714, so
@@ -138,6 +140,55 @@ when Jev is not sure of the shape and the words do not say it ("how many", "whic
 "are all", "any", "status of"), when the state asked about does not fit the devices,
 and for questions about two kinds of device at once. Every language other than
 English keeps the full list too.
+
+## Follow-ups
+
+The agent remembers what the last turn was about, so the next sentence can say "them"
+or "and the office". Both are read in the same one request as any other sentence, so
+a follow-up costs one call.
+
+| Turn 1 | Turn 2 | What happens |
+|---|---|---|
+| Which lights are on in the kids room? "Shelf and study table are on." | Turn them off | "Turned off shelf and study table." Those two lights turn off and nothing else does |
+| Turn on the kitchen light | Turn it off | The kitchen light turns off |
+| Turn on the kitchen light | Set it to 40% | The kitchen light goes to 40% |
+| Are any lights on in the kids room? "Yes, two: shelf and study table." | And the living room? | "Yes, one: lamp." The same question for the living room |
+| Turn off the lights in the kitchen | And the office | The office lights turn off |
+| Which curtains are closed? | Open it | The curtain the answer named opens |
+| Turn on the kitchen light | Is the office light on? | A new question, so the memory is not used |
+
+How it works:
+
+- The memory belongs to one conversation: one satellite, or one Assist dialog.
+  Another satellite has none of it. It lasts five minutes from the last turn, the
+  time Home Assistant keeps a conversation open, and a restart clears it.
+- The memory holds the devices the last answer was about: the ones an action changed,
+  the ones a short status answer named, or every device a full list showed. A device
+  you have since stopped exposing is left out.
+- The two follow-up questions are sent only when there is a record, so a first
+  sentence costs what it did. See
+  [measurements](measurements.md#the-follow-up-questions).
+- "Them" takes the action from the new sentence. "And the office" takes the action
+  from the last one and the target from the new one. A sentence that reads as both,
+  or as neither, is handled as if there were no memory.
+- A room or floor you name that does not hold the remembered devices wins over the
+  memory, and a sentence that names its own device is not a follow-up.
+- A fallback, a refusal and the question "which device" leave the memory as it was, so
+  a misheard sentence does not wipe it.
+- After a short status answer that names at least one device, the satellite keeps
+  listening for one more sentence with no wake word. It does not after an action, a
+  full list or an answer that names nothing.
+- The Assist dialog shows a line under the reply, "Follow-up: refers back to ..." or
+  "Follow-up: same again as ...", and the trace in diagnostics records `follow_up`.
+
+Not handled, and sent to the fallback agent as before: a relative change such as
+"make it brighter", "the others" and undo.
+
+!!! info "Turn off Prefer handling commands locally"
+    Home Assistant answers a simple command such as "turn on the kitchen light" itself
+    when that option is on in the pipeline, and the sentence never reaches Jev. Jev
+    then has no record, and "turn it off" has nothing to point back to. Turn the option
+    off for the pipeline that uses Jev if you want follow-ups after simple commands.
 
 ## A house with more than 150 exposed entities
 

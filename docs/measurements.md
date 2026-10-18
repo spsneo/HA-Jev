@@ -139,6 +139,17 @@ They go in the one request rather than a second one, so a status question still
 costs one call. The tokens these bytes cost have not been measured against the live
 API, and neither has how often the shape answer is right.
 
+### The follow-up questions
+
+Measured locally on 2026-10-19 with `payload_bytes`, no API call, on a 20-entity house
+of 14 lights and 6 switches over 4 areas, with the command "turn them off". The
+`refers_back` and `same_again` questions add 601 bytes, and a `last_turn` of two
+devices adds 139 more, 740 in all, which is 8.9% on that house. They are sent only when
+a record exists, so a first sentence costs what it did. Their cost in tokens has not
+been measured against the live API, and neither has how often the answers are right.
+The floors are not measured either: 0.8 for a sentence with no cue word, and the
+configured confidence floor (default 0.6) with an English cue word.
+
 ## Which entities fit under the cap
 
 Measured locally on 2026-09-30, Apple M5 Pro, Python 3.14, with no API call. The
