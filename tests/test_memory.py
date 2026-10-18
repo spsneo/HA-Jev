@@ -76,3 +76,15 @@ def test_describe_caps_a_long_list():
     described = make_turn(names=names).describe()
     assert described["about"] == list(names[:20])
     assert described["and_more"] == 5
+
+
+def test_remembering_drops_every_expired_turn():
+    # A satellite that never speaks again would otherwise keep its turn for good.
+    memory = Memory()
+    memory.remember("gone", make_turn(at=dt_util.utcnow() - timedelta(minutes=6)))
+    memory.remember("also gone", make_turn(at=dt_util.utcnow() - timedelta(hours=2)))
+    memory.remember("recent", make_turn(at=dt_util.utcnow() - timedelta(minutes=1)))
+    memory.remember("abc", make_turn())
+    assert len(memory) == 2
+    assert memory.get("recent") is not None
+    assert memory.get("abc") is not None

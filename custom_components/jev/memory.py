@@ -62,6 +62,10 @@ class Memory:
         self._window = window
         self._turns: dict[str, Turn] = {}
 
+    def __len__(self) -> int:
+        """How many conversations have a turn kept, expired or not."""
+        return len(self._turns)
+
     def get(self, conversation_id: str | None) -> Turn | None:
         """The turn to follow, or None when there is none or it has expired."""
         if conversation_id is None:
@@ -75,6 +79,16 @@ class Memory:
         return turn
 
     def remember(self, conversation_id: str | None, turn: Turn) -> None:
-        """Keep the turn in place of the last one."""
+        """Keep the turn in place of the last one, and drop every expired turn.
+
+        get() drops a turn only when its own conversation speaks again, so without
+        this a satellite that never does would keep its turn until a restart.
+        """
+        now = dt_util.utcnow()
+        self._turns = {
+            key: kept
+            for key, kept in self._turns.items()
+            if now - kept.at <= self._window
+        }
         if conversation_id is not None:
             self._turns[conversation_id] = turn
