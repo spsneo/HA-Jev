@@ -931,6 +931,10 @@ async def _render_temperature_answer(
 _AREA_RESPONSES = {"light": ("lights_area",), "fan": ("fans_area",)}
 _FLOOR_RESPONSES = {"light": ("lights_floor",)}
 _ALL_RESPONSES = {"light": ("light_all", "lights_all"), "fan": ("fan_all",)}
+# Domains whose own sentence fits a room as well as one device. English's default
+# names the device from a table that has no cover, so a room of curtains came back
+# as "Turned on None"; its cover sentence is "Opening".
+_DOMAIN_RESPONSES = ("cover", "valve", "lock")
 
 _SLOT_REFERENCE = re.compile(r"slots\.(\w+)")
 
@@ -960,6 +964,8 @@ def _response_keys(
         closest = (domain,)
     else:
         closest = ()
+    if kind in _DOMAIN_RESPONSES and kind not in closest:
+        closest = (*closest, kind)
     return (*closest, "default")
 
 
@@ -1025,7 +1031,10 @@ async def _render_action_answer(
                 "the %s answer for %s did not render: %s", key, intent_type, err
             )
             continue
-        if sentence := " ".join(str(rendered).split()):
+        sentence = " ".join(str(rendered).split())
+        # A default that names the device from a table of domains renders a domain
+        # missing from it as None. "Turned on None" is worse than "Done."
+        if sentence and sentence.split()[-1] != "None":
             return sentence
     return None
 

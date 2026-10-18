@@ -32,7 +32,12 @@ from custom_components.jev.const import (
     CONF_MIN_CONFIDENCE,
     CONVERSATION_TRACE_LENGTH,
 )
-from custom_components.jev.conversation import _render_state_answer
+from custom_components.jev.conversation import (
+    _SHIPPED,
+    _render_action_answer,
+    _render_state_answer,
+    _Shipped,
+)
 from custom_components.jev.interpret import NONE, find_brightness
 from custom_components.jev.payload import payload_bytes
 
@@ -1223,6 +1228,31 @@ async def test_several_states_in_one_answer_keep_their_names(
     spoken = await _render_state_answer(hass, matched, [], language)
 
     assert spoken == expected
+
+
+async def test_a_default_that_cannot_name_the_domain_is_not_said(hass, house):
+    """A default's table of domains renders a missing one as "Turned on None"."""
+    hass.states.async_set("cover.study", "open", {"friendly_name": "Study curtain"})
+    response = ha_intent.IntentResponse(language="xx")
+    response.async_set_states([hass.states.get("cover.study")])
+    shipped = _Shipped(
+        state_answer=None,
+        writes_the_state_word=False,
+        temperature_answer=None,
+        errors={},
+        action_answers={
+            "HassTurnOn": {
+                "default": "{% set t = {'light': 'the light'} %}"
+                "Turned on {{ t.get(state.domain) }}"
+            }
+        },
+    )
+    slots = {"area": {"value": "Study"}, "domain": {"value": ["cover"]}}
+
+    with patch.dict(_SHIPPED, {"xx": shipped}):
+        spoken = await _render_action_answer(hass, response, "HassTurnOn", slots, "xx")
+
+    assert spoken is None
 
 
 @pytest.mark.parametrize(
