@@ -881,3 +881,24 @@ async def test_and_the_office_after_turn_on_at_50(hass, home, calls, mock_client
     )
     await turn(hass, "and the office", first.conversation_id)
     assert calls == [("light.turn_on", "light.office", {"brightness_pct": 50})]
+
+
+async def test_them_keeps_the_remembered_devices_inside_the_cap(
+    hass, home, calls, mock_client
+):
+    # Four entities fit. "turn them off" names nothing, so ranked on its own words
+    # the cap would keep the curtains and the other kids room lights and leave out
+    # the two lights it means.
+    with patch("custom_components.jev.conversation.MAX_CONVERSATION_ENTITIES", 4):
+        mock_client.ask.return_value = asked()
+        first = await turn(hass, "which lights are on in the kids room")
+        assert spoken(first).startswith("Shelf and study table are on.")
+
+        mock_client.ask.return_value = follow()
+        second = await turn(hass, "turn them off", first.conversation_id)
+        offered = {e["entity_id"] for e in mock_client.state_seen["entities"]}
+
+    assert {"light.kids_shelf", "light.kids_study_table"} <= offered
+    assert len(offered) == 4
+    assert touched(calls) == {"light.kids_shelf", "light.kids_study_table"}
+    assert spoken(second) == "Turned off shelf and study table."

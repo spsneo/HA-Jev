@@ -111,3 +111,21 @@ async def test_under_the_cap_nothing_is_left_out(hass, big_house):
     snapshot = async_snapshot(hass, 150, "turn on the zebra lamp")
     assert len(kept(snapshot)) == 11
     assert snapshot.left_out == 0
+
+
+async def test_remembered_devices_are_kept_past_the_cap(hass, big_house):
+    """ "turn them off" shares no word with the devices it means."""
+    snapshot = async_snapshot(
+        hass, 3, "turn them off", remembered={"light.a08", "light.zebra_lamp"}
+    )
+    assert {"light.a08", "light.zebra_lamp"} <= set(kept(snapshot))
+    assert len(kept(snapshot)) == 3
+
+
+async def test_a_remembered_device_no_longer_exposed_is_not_brought_back(hass, big_house):
+    async_expose_entity(hass, conversation.DOMAIN, "light.zebra_lamp", False)
+    snapshot = async_snapshot(
+        hass, 3, "turn them off", remembered={"light.a08", "light.zebra_lamp"}
+    )
+    assert "light.zebra_lamp" not in kept(snapshot)
+    assert "light.a08" in kept(snapshot)

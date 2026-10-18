@@ -229,8 +229,15 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         heard_in = async_heard_in(
             self.hass, user_input.satellite_id, user_input.device_id
         )
+        # Read before the snapshot, so the devices "them" means are kept inside the
+        # cap however few words the sentence shares with them.
+        last = self._memory.get(chat_log.conversation_id)
         snapshot = async_snapshot(
-            self.hass, MAX_CONVERSATION_ENTITIES, user_input.text, heard_in
+            self.hass,
+            MAX_CONVERSATION_ENTITIES,
+            user_input.text,
+            heard_in,
+            remembered=frozenset(last.devices) if last is not None else (),
         )
         if not snapshot.entities:
             return await self._fall_back(
@@ -239,7 +246,6 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
 
         # The memory's bytes go into the same request and through the same budget
         # check, and a conversation with nothing to follow asks what it asked before.
-        last = self._memory.get(chat_log.conversation_id)
         questions = build_questions(
             user_input.text,
             snapshot,
