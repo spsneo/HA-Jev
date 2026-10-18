@@ -182,6 +182,29 @@ def classify(state: State) -> Reading:
     return Reading({"on": Bucket.ON, "off": Bucket.OFF}.get(value, Bucket.OTHER))
 
 
+# The buckets a device of one kind can be in. A question about "on" fits a light
+# and not a curtain, and Jev's answer about which state was asked can be wrong.
+_FAMILIES = (
+    frozenset({Bucket.ON, Bucket.OFF}),
+    frozenset({Bucket.OPEN, Bucket.PARTLY_OPEN, Bucket.CLOSED, Bucket.MOVING}),
+    frozenset({Bucket.LOCKED, Bucket.UNLOCKED, Bucket.JAMMED, Bucket.MOVING}),
+)
+
+
+def fits(asked: Bucket, states: Sequence[State]) -> bool:
+    """Whether every device here can be in the asked state or its opposite.
+
+    False sends the question back to the full list. That covers a device with no
+    yes or no in its state, such as a media player that is playing, and a state
+    asked of the wrong kind of device.
+    """
+    family = next((f for f in _FAMILIES if asked in f), frozenset())
+    return all(
+        (bucket := classify(state).bucket) is Bucket.UNKNOWN or bucket in family
+        for state in states
+    )
+
+
 def without_groups(states: Sequence[State]) -> list[State]:
     """Drop a group whose members are here too, so nothing is counted twice."""
     present = {state.entity_id for state in states}

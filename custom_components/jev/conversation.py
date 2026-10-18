@@ -54,6 +54,7 @@ from jevclient import (
     Question,
 )
 
+from . import status
 from .const import (
     CONF_ALLOW_WHOLE_HOME,
     CONF_FALLBACK_AGENT,
@@ -493,19 +494,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
 
         assert decision.intent_type is not None
         try:
-            intent_response = await ha_intent.async_handle(
-                self.hass,
-                DOMAIN,
-                decision.intent_type,
-                decision.slots,
-                text,
-                user_input.context,
-                language=user_input.language,
-                assistant=conversation.DOMAIN,
-                device_id=user_input.device_id,
-                satellite_id=user_input.satellite_id,
-                conversation_agent_id=user_input.agent_id,
-            )
+            intent_response = await self._read_rooms(user_input, decision, text)
         except ha_intent.MatchFailedError as err:
             # The model named something the intent layer could not find. That is a
             # miss, not a failure, so the fallback agent gets the sentence intact.
@@ -532,6 +521,12 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         # its own loads them.
         language = user_input.language or self.hass.config.language
         if intent_response.response_type is ha_intent.IntentResponseType.QUERY_ANSWER:
+            if (
+                decision.intent_type == ha_intent.INTENT_GET_STATE
+                and language_util.matches(language, {"en"})
+                and (spoken := _status_answer(decision, intent_response)) is not None
+            ):
+                intent_response.async_set_speech(spoken)
             await _speak_the_answer(
                 self.hass,
                 intent_response,
@@ -552,6 +547,61 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         return conversation.ConversationResult(
             response=intent_response, conversation_id=user_input.conversation_id
         )
+
+    async def _read_rooms(
+        self,
+        user_input: conversation.ConversationInput,
+        decision: Interpretation,
+        text: str,
+    ) -> ha_intent.IntentResponse:
+        """Run the intent, once per room when a state question names several.
+
+        Each room goes through Home Assistant's own intent, so its exposure check
+        still decides what is read. A room with nothing of the kind is left out,
+        and only when every room is empty does the miss go up to the caller.
+        """
+        assert decision.intent_type is not None
+        rooms: list[str | None] = [*decision.rooms] or [None]
+        responses: list[ha_intent.IntentResponse] = []
+        missed: ha_intent.MatchFailedError | None = None
+        for room in rooms:
+            slots = decision.slots
+            if room is not None:
+                slots = slots | {"area": {"value": room}}
+            try:
+                responses.append(
+                    await ha_intent.async_handle(
+                        self.hass,
+                        DOMAIN,
+                        decision.intent_type,
+                        slots,
+                        text,
+                        user_input.context,
+                        language=user_input.language,
+                        assistant=conversation.DOMAIN,
+                        device_id=user_input.device_id,
+                        satellite_id=user_input.satellite_id,
+                        conversation_agent_id=user_input.agent_id,
+                    )
+                )
+            except ha_intent.MatchFailedError as err:
+                if len(rooms) == 1:
+                    raise
+                missed = err
+        if not responses:
+            assert missed is not None
+            raise missed
+        first, *others = responses
+        if others:
+            matched = {s.entity_id: s for r in responses for s in r.matched_states}
+            unmatched = {
+                s.entity_id: s
+                for r in responses
+                for s in r.unmatched_states
+                if s.entity_id not in matched
+            }
+            first.async_set_states(list(matched.values()), list(unmatched.values()))
+        return first
 
     # --- the two ways out ---
 
@@ -656,6 +706,12 @@ def _reasoning(trace: Mapping[str, Any], response: JevResponse) -> str:
             f"confidence {trace['confidence']:.2f}",
             f"Slots: {json.dumps(trace['slots'], ensure_ascii=False)}",
         ]
+        if trace.get("shape"):
+            rooms = ", ".join(trace.get("rooms") or []) or "as above"
+            lines.append(
+                f"Status: {trace['shape']}, asked {trace.get('asked_state') or 'nothing'}"
+                f", cue {trace.get('shape_cue') or 'none'}, rooms {rooms}"
+            )
     for key, answer in response.answers.items():
         if isinstance(answer, ChoiceAnswer):
             ranked = sorted((answer.probabilities or {}).items(), key=lambda kv: -kv[1])[
@@ -1042,6 +1098,60 @@ async def _render_action_answer(
         if sentence and sentence.split()[-1] != "None":
             return sentence
     return None
+
+
+# What a device is called in a short answer, by domain. A cover goes by its device
+# class instead, so curtains are curtains and blinds are blinds.
+_NOUNS = {
+    "light": "light",
+    "switch": "switch",
+    "input_boolean": "switch",
+    "fan": "fan",
+    "cover": "cover",
+    "valve": "valve",
+    "lock": "lock",
+}
+
+
+def _status_answer(
+    decision: Interpretation, response: ha_intent.IntentResponse
+) -> str | None:
+    """The short answer to a state question, or None to keep the full list.
+
+    None for a question about one named device, for "what is the status", for a
+    state Jev was not sure was asked, and for devices whose state has no yes or no
+    in it. Each of those keeps the sentence every state question had before.
+    """
+    if (
+        decision.shape in (None, status.Shape.ONE, status.Shape.LIST)
+        or decision.asked_state is None
+    ):
+        return None
+    # A device named on its own is the one-device answer, word for word.
+    if "name" in decision.slots:
+        return None
+    shape = status.Shape(decision.shape)
+    asked = status.Bucket(decision.asked_state)
+    states = [*response.matched_states, *response.unmatched_states]
+    if not status.fits(asked, states):
+        return None
+    # Nothing in scope is said as that, not as a no: "I don't see any fans".
+    domains = {state.domain for state in states} or set(
+        decision.slots.get("domain", {}).get("value", [])
+    )
+    if len(domains) != 1 or (noun := _NOUNS.get(domains.pop())) is None:
+        return None
+    if noun == "cover":
+        classes = {state.attributes.get(ATTR_DEVICE_CLASS) for state in states}
+        if len(classes) == 1 and isinstance(kind := classes.pop(), str):
+            noun = kind.replace("_", " ")
+    if decision.rooms:
+        rooms = decision.rooms
+    elif "area" in decision.slots:
+        rooms = [decision.slots["area"]["value"]]
+    else:
+        rooms = []
+    return status.answer(shape, asked, states, noun=noun, area_names=rooms)
 
 
 async def _speak_the_answer(

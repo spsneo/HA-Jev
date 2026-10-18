@@ -18,6 +18,7 @@ from custom_components.jev.status import (
     Shape,
     answer,
     classify,
+    fits,
     short_name,
 )
 
@@ -387,3 +388,18 @@ def test_the_wording_can_be_passed_in():
         lines={"status_one_is": "{count} {noun} runs."},
     )
     assert spoken == "One fan runs."
+
+
+@pytest.mark.parametrize(
+    ("asked", "states", "expected"),
+    [
+        (Bucket.ON, [light("a", "on", "A"), light("b", "unavailable", "B")], True),
+        (Bucket.OPEN, [curtain("c", "opening", "C", 30)], True),
+        (Bucket.LOCKED, [lock("l", "jammed", "L")], True),
+        # On is not a thing a curtain is.
+        (Bucket.ON, [curtain("c", "open", "C", 100)], False),
+        (Bucket.ON, [State("media_player.tv", "playing", {})], False),
+    ],
+)
+def test_the_asked_state_fits_the_devices(asked, states, expected):
+    assert fits(asked, states) is expected

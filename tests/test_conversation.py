@@ -1128,6 +1128,28 @@ async def test_the_assist_dialog_shows_what_jev_answered(hass, house, mock_clien
     assert [c.role for c in content] == ["system", "user"]
 
 
+async def test_the_assist_dialog_shows_how_a_state_question_was_read(
+    hass, house, mock_client
+):
+    mock_client.ask.return_value = build_response(
+        **answer_set(
+            action=ChoiceAnswer(choice="get_state", probabilities={}, confidence=0.95),
+            target_type=ChoiceAnswer(choice="area", probabilities={}, confidence=0.9),
+            entity=ChoiceAnswer(choice=NONE, probabilities={}, confidence=0.9),
+            area=ChoiceAnswer(choice="Office", probabilities={}, confidence=0.9),
+            shape=ChoiceAnswer(choice="any", probabilities={}, confidence=0.5),
+            asked_state=ChoiceAnswer(choice="on", probabilities={}, confidence=0.9),
+        )
+    )
+    result, deltas, _ = await converse_in_a_pipeline(
+        hass, "are any lights on in the kitchen or the office"
+    )
+
+    shown = deltas[0]["thinking_content"]
+    assert "Status: any, asked on, cue any, rooms Kitchen, Office" in shown
+    assert result.response.speech["plain"]["speech"] == "No, all lights are off."
+
+
 async def test_the_assist_dialog_shows_why_jev_refused(hass, house, mock_client):
     mock_client.ask.return_value = build_response(
         **answer_set(compound=NoulAnswer(noul=0.95))
