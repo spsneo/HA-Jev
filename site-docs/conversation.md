@@ -154,6 +154,7 @@ a follow-up costs one call.
 | Turn on the kitchen light | Set it to 40% | The kitchen light goes to 40% |
 | Are any lights on in the kids room? "Yes, two: shelf and study table." | And the living room? | "Yes, one: lamp." The same question for the living room |
 | Turn off the lights in the kitchen | And the office | The office lights turn off |
+| Set the shelf to 40% | And the living room | The living room lights go to 40%, with no second request for the level |
 | Which curtains are closed? | Open it | The curtain the answer named opens |
 | Turn on the kitchen light | Is the office light on? | A new question, so the memory is not used |
 

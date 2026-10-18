@@ -609,3 +609,64 @@ def test_the_others_is_not_the_remembered_devices():
         assert decision.follow_up is None, text
         assert decision.remembered == [], text
         assert decision.each == [], text
+
+
+def brightness_turn(level):
+    return turn(
+        devices=("light.shelf",),
+        action="set_brightness",
+        intent_type="HassLightSet",
+        shape=None,
+        asked_state=None,
+        text="set the shelf to 40%",
+        level=level,
+    )
+
+
+def and_the_living_room():
+    return answers(
+        action=c("turn_on", 0.4),
+        target_type=c("area", 0.9),
+        area=c("Living Room", 0.9),
+        same_again=NoulAnswer(noul=0.9),
+    )
+
+
+def test_and_the_living_room_sets_the_remembered_level():
+    decision = interpret(
+        and_the_living_room(),
+        "and the living room",
+        SNAPSHOT,
+        MIN,
+        last=brightness_turn(40),
+    )
+    assert decision.intent_type == "HassLightSet"
+    assert decision.follow_up == "same_again"
+    assert decision.slots["brightness"]["value"] == 40
+    assert decision.slots["area"]["value"] == "Living Room"
+    # No second request for a level the sentence never said.
+    assert decision.needs_level is False
+
+
+def test_a_level_said_again_wins_over_the_remembered_one():
+    decision = interpret(
+        and_the_living_room(),
+        "and the living room at 70%",
+        SNAPSHOT,
+        MIN,
+        last=brightness_turn(40),
+    )
+    assert decision.slots["brightness"]["value"] == 70
+
+
+def test_a_brightness_turn_with_no_level_is_not_repeated():
+    decision = interpret(
+        and_the_living_room(),
+        "and the living room",
+        SNAPSHOT,
+        MIN,
+        last=brightness_turn(None),
+    )
+    assert decision.follow_up is None
+    assert decision.needs_level is False
+    assert decision.intent_type != "HassLightSet"

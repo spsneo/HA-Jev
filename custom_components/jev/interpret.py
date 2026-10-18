@@ -912,7 +912,13 @@ def interpret(
             and own.choice != last.action
         ):
             follow_up = None
-        elif last.action in ACTIONS and _a_sure_target(response, min_confidence):
+        elif (
+            last.action in ACTIONS
+            # A level the last turn never held cannot be repeated, and reading it
+            # would be a second paid request for a level this sentence never said.
+            and not (last.action == "set_brightness" and last.level is None)
+            and _a_sure_target(response, min_confidence)
+        ):
             response = replace(response, answers=_repeated(response.answers, last))
         else:
             follow_up = None
@@ -1202,6 +1208,9 @@ def interpret(
         slots["domain"] = {"value": ["light"]}
     if action.choice == "set_brightness":
         brightness = find_brightness(spoken)
+        if brightness is None and follow_up == "same_again" and last is not None:
+            # "and the living room" after "set the shelf to 40%" sets 40 there.
+            brightness = last.level
         if brightness is not None:
             slots["brightness"] = {"value": brightness}
         elif said_a_digit(spoken):

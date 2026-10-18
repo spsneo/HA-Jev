@@ -840,3 +840,44 @@ async def test_turn_off_the_others_turns_off_nothing(hass, home, calls, mock_cli
     second = await turn(hass, "turn off the others", first.conversation_id)
     assert calls == []
     assert spoken(second) == NOT_UNDERSTOOD
+
+
+async def test_and_the_living_room_after_set_the_shelf_to_40(
+    hass, home, calls, mock_client
+):
+    mock_client.ask.return_value = named("light.kids_shelf", "set_brightness")
+    first = await turn(hass, "set the shelf to 40%")
+    assert calls == [("light.turn_on", "light.kids_shelf", {"brightness_pct": 40})]
+    calls.clear()
+    before = len(jev_calls(mock_client))
+
+    mock_client.ask.return_value = asked(
+        action=c("turn_on", 0.4),
+        area=c("Living Room"),
+        domain=c("none_of_these", 0.9),
+        shape=c("list", 0.5),
+        asked_state=c("none", 0.9),
+        same_again=NoulAnswer(noul=0.9),
+    )
+    await turn(hass, "and the living room", first.conversation_id)
+    assert calls == [("light.turn_on", "light.living_lamp", {"brightness_pct": 40})]
+    # The level comes from the memory, not from a second request.
+    assert len(jev_calls(mock_client)) == before + 1
+
+
+async def test_and_the_office_after_turn_on_at_50(hass, home, calls, mock_client):
+    mock_client.ask.return_value = named("light.kitchen")
+    first = await turn(hass, "turn on the kitchen light at 50%")
+    assert calls == [("light.turn_on", "light.kitchen", {"brightness_pct": 50})]
+    calls.clear()
+
+    mock_client.ask.return_value = asked(
+        action=c("turn_on", 0.4),
+        area=c("Office"),
+        domain=c("none_of_these", 0.9),
+        shape=c("list", 0.5),
+        asked_state=c("none", 0.9),
+        same_again=NoulAnswer(noul=0.9),
+    )
+    await turn(hass, "and the office", first.conversation_id)
+    assert calls == [("light.turn_on", "light.office", {"brightness_pct": 50})]

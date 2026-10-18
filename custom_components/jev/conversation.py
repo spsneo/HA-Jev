@@ -649,11 +649,18 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             where = (decision.slots["floor"]["value"],)
         else:
             where = ()
+        # A brightness is remembered as one whatever the sentence began as: "turn on
+        # the lamp at 50%" ran HassLightSet, so "and the office" sets 50 there too.
+        action = decision.action
+        level: int | None = None
+        if decision.intent_type == ACTIONS["set_brightness"]:
+            action = "set_brightness"
+            level = decision.slots.get("brightness", {}).get("value")
         self._memory.remember(
             chat_log.conversation_id,
             Turn(
                 text=text,
-                action=decision.action,
+                action=action,
                 intent_type=decision.intent_type or ACTIONS.get(decision.action, ""),
                 domains=tuple(dict.fromkeys(domains)),
                 where=where,
@@ -662,6 +669,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 names=tuple(state.name for state in devices),
                 shape=decision.shape,
                 asked_state=decision.asked_state,
+                level=level,
             ),
         )
 
