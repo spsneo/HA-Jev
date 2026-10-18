@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeGuard
 
 from homeassistant.helpers import intent as ha_intent
 from jevclient import (
@@ -864,6 +864,19 @@ def interpret(
             and own.choice not in {e.entity_id for e in remembered}
         ):
             remembered = []
+        # The same for a room or a floor: "turn off the living room lights" after a
+        # question about the kids room means the living room, however "them" read.
+        # A room or floor that holds every remembered device only says where they are.
+        room_said, floor_said = choice("area"), choice("floor")
+        if _sure(room_said, min_confidence) and any(
+            e.area != room_said.choice for e in remembered
+        ):
+            remembered = []
+        if _sure(floor_said, min_confidence) and any(
+            snapshot.area_floors.get(e.area or "") != floor_said.choice
+            for e in remembered
+        ):
+            remembered = []
         if not remembered:
             follow_up = None
     elif follow_up == "same_again" and last is not None:
@@ -1225,6 +1238,15 @@ def _follow_up_floor(cued: bool, min_confidence: float) -> float:
     if cued:
         return min(min_confidence, FOLLOW_UP_FLOOR)
     return max(min_confidence, FOLLOW_UP_FLOOR)
+
+
+def _sure(answer: ChoiceAnswer | None, min_confidence: float) -> TypeGuard[ChoiceAnswer]:
+    """Whether a choice names something, at or above the agent's floor."""
+    return (
+        answer is not None
+        and answer.choice != NONE
+        and answer.confidence >= min_confidence
+    )
 
 
 def _a_sure_target(response: JevResponse, min_confidence: float) -> bool:

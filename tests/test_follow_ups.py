@@ -15,10 +15,13 @@ from homeassistant.components.homeassistant.exposed_entities import async_expose
 from homeassistant.core import Context, State
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers import intent as ha_intent
 from homeassistant.setup import async_setup_component
 from jevclient import ChoiceAnswer, NoulAnswer
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+from custom_components.jev.const import CONF_FALLBACK_AGENT
 
 from .conftest import build_response
 
@@ -721,3 +724,89 @@ def test_the_reasoning_says_what_a_repeat_repeats():
     }
     shown = _reasoning(trace, build_response())
     assert 'Follow-up: same again as "are any lights on in the kids room"' in shown
+
+
+async def test_an_unexpected_error_after_a_device_changed_is_left_out(
+    hass, home, calls, mock_client
+):
+    """Once a device has changed, the turn never ends in an error."""
+    real = ha_intent.async_handle
+
+    async def handle(hass, platform, intent_type, slots, *args, **kwargs):
+        if slots.get("name", {}).get("value") == "Kids Room Study Table Light":
+            raise ha_intent.IntentUnexpectedError("the integration broke")
+        return await real(hass, platform, intent_type, slots, *args, **kwargs)
+
+    mock_client.ask.return_value = asked()
+    first = await turn(hass, "which lights are on in the kids room")
+
+    mock_client.ask.return_value = follow()
+    with patch(
+        "custom_components.jev.conversation.ha_intent.async_handle", side_effect=handle
+    ):
+        second = await turn(hass, "turn them off", first.conversation_id)
+    assert touched(calls) == {"light.kids_shelf"}
+    assert spoken(second) == "Turned off shelf."
+    calls.clear()
+
+    # The record holds what changed, and only that.
+    mock_client.ask.return_value = follow("turn_on")
+    await turn(hass, "turn them back on", first.conversation_id)
+    assert touched(calls) == {"light.kids_shelf"}
+
+
+async def test_a_sure_floor_elsewhere_acts_on_that_floor(hass, home, calls, mock_client):
+    floors = fr.async_get(hass)
+    areas = ar.async_get(hass)
+    for room, floor in (("Kids Room", "Upstairs"), ("Office", "Downstairs")):
+        floor_id = (
+            floors.async_get_floor_by_name(floor) or floors.async_create(floor)
+        ).floor_id
+        areas.async_update(areas.async_get_area_by_name(room).id, floor_id=floor_id)
+
+    mock_client.ask.return_value = asked()
+    first = await turn(hass, "which lights are on in the kids room")
+
+    mock_client.ask.return_value = follow(
+        target_type=c("area", 0.95),
+        floor=c("Downstairs"),
+        domain=c("light"),
+        refers_back=NoulAnswer(noul=0.85),
+    )
+    await turn(hass, "turn off the lights downstairs", first.conversation_id)
+    assert touched(calls) == {"light.office"}
+
+
+async def test_the_fallback_agent_keeps_its_own_conversation(
+    hass, home, calls, mock_client
+):
+    """A client that starts with no id continues the fallback agent's session too."""
+    hass.config_entries.async_update_entry(
+        home, options={CONF_FALLBACK_AGENT: "conversation.home_assistant"}
+    )
+    await hass.async_block_till_done()
+    handed: list[tuple[str | None, str | None]] = []
+    real = conversation.async_converse
+
+    async def converse(hass, text, conversation_id, *args, **kwargs):
+        result = await real(hass, text, conversation_id, *args, **kwargs)
+        if kwargs.get("agent_id") != AGENT:
+            handed.append((conversation_id, result.conversation_id))
+        return result
+
+    mock_client.ask.return_value = follow("none_of_these", refers_back=NoulAnswer(0.05))
+    with patch(
+        "custom_components.jev.conversation.conversation.async_converse",
+        side_effect=converse,
+    ):
+        first = await turn(hass, "play some music", None)
+        second = await turn(hass, "play some music", first.conversation_id)
+
+    assert first.conversation_id is not None
+    assert second.conversation_id == first.conversation_id
+    # Each handover joins this agent's session, so the fallback agent's own memory
+    # lives under the id the client continues with.
+    assert handed == [
+        (first.conversation_id, first.conversation_id),
+        (first.conversation_id, first.conversation_id),
+    ]

@@ -110,6 +110,9 @@ class HomeSnapshot:
     floors: list[str] = field(default_factory=list)
     # The same for floors. Home Assistant matches a floor by its aliases too.
     floor_aliases: dict[str, list[str]] = field(default_factory=dict)
+    # The floor of each area, by name, for areas on one. Not sent: it lets a
+    # follow-up check that a floor the sentence names holds the remembered devices.
+    area_floors: dict[str, str] = field(default_factory=dict)
     # The areas whose own temperature sensor Home Assistant reads when asked how warm
     # the area is. The sensor is not a device the agent controls, so without this a
     # room with only a sensor was not offered at all (issue #50).
@@ -306,6 +309,13 @@ def async_snapshot(
             f.name: aliases
             for f in used_floors
             if (aliases := _other_names(f.name, f.aliases))
+        },
+        area_floors={
+            a.name: floor.name
+            for a in used_areas
+            if a
+            and a.floor_id
+            and (floor := floors.async_get_floor(a.floor_id)) is not None
         },
         temperature_areas=sorted(
             a.name for a in used_areas if a and a.id in sensed_area_ids

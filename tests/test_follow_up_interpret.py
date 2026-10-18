@@ -444,3 +444,80 @@ def test_one_device_left_of_a_house_wide_turn_is_not_the_whole_house():
     )
     assert decision.follow_up == "refers_back"
     assert decision.targets_everything is False
+
+
+ON_FLOORS = HomeSnapshot(
+    entities=SNAPSHOT.entities,
+    areas=SNAPSHOT.areas,
+    floors=["Downstairs", "Upstairs"],
+    area_floors={"Kids Room": "Upstairs", "Living Room": "Downstairs"},
+)
+
+
+def test_a_sure_room_without_the_remembered_devices_is_not_a_follow_up():
+    for text, back in (
+        ("turn off both living room lights", 0.7),  # cued by "both"
+        ("turn off the living room lights", 0.85),
+    ):
+        decision = interpret(
+            answers(
+                refers_back=NoulAnswer(noul=back),
+                target_type=c("area", 0.95),
+                area=c("Living Room", 0.95),
+            ),
+            text,
+            SNAPSHOT,
+            MIN,
+            last=turn(),
+        )
+        assert decision.follow_up is None, text
+        assert decision.each == [], text
+        assert decision.slots["area"]["value"] == "Living Room", text
+
+
+def test_a_sure_room_holding_the_remembered_devices_keeps_the_follow_up():
+    decision = interpret(
+        answers(
+            refers_back=NoulAnswer(noul=0.9),
+            target_type=c("area", 0.95),
+            area=c("Kids Room", 0.95),
+        ),
+        "turn them off in the kids room",
+        SNAPSHOT,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up == "refers_back"
+    assert decision.remembered == ["light.shelf", "light.study_table"]
+
+
+def test_a_sure_floor_without_the_remembered_devices_is_not_a_follow_up():
+    decision = interpret(
+        answers(
+            refers_back=NoulAnswer(noul=0.85),
+            target_type=c("area", 0.95),
+            floor=c("Downstairs", 0.95),
+        ),
+        "turn off the lights downstairs",
+        ON_FLOORS,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up is None
+    assert decision.slots["floor"]["value"] == "Downstairs"
+
+
+def test_a_sure_floor_holding_the_remembered_devices_keeps_the_follow_up():
+    decision = interpret(
+        answers(
+            refers_back=NoulAnswer(noul=0.9),
+            target_type=c("area", 0.95),
+            floor=c("Upstairs", 0.95),
+        ),
+        "turn them off upstairs",
+        ON_FLOORS,
+        MIN,
+        last=turn(),
+    )
+    assert decision.follow_up == "refers_back"
+    assert decision.remembered == ["light.shelf", "light.study_table"]

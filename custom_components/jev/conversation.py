@@ -233,7 +233,9 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             self.hass, MAX_CONVERSATION_ENTITIES, user_input.text, heard_in
         )
         if not snapshot.entities:
-            return await self._fall_back(user_input, "no entities are exposed to Assist")
+            return await self._fall_back(
+                user_input, chat_log, "no entities are exposed to Assist"
+            )
 
         # The memory's bytes go into the same request and through the same budget
         # check, and a conversation with nothing to follow asks what it asked before.
@@ -247,7 +249,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         state = snapshot.as_state() | {"command": user_input.text}
         if last is not None:
             state["last_turn"] = last.describe()
-        response = await self._ask(user_input, state, questions)
+        response = await self._ask(user_input, chat_log, state, questions)
         if isinstance(response, conversation.ConversationResult):
             return response
 
@@ -292,6 +294,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
     async def _ask(
         self,
         user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
         state: dict[str, Any],
         questions: dict[str, Question],
     ) -> JevResponse | conversation.ConversationResult:
@@ -307,6 +310,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         if runtime.usage.would_exceed_with(estimate):
             return await self._fall_back(
                 user_input,
+                chat_log,
                 f"the daily token budget has {runtime.usage.remaining()} tokens left "
                 f"and this command needs about {estimate}",
                 "budget_spent",
@@ -319,12 +323,12 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             _LOGGER.error("TypeSafe rejected the API key: %s", err)
             self._entry.async_start_reauth(self.hass)
             return await self._fall_back(
-                user_input, "the API key was rejected", "auth_failed"
+                user_input, chat_log, "the API key was rejected", "auth_failed"
             )
         except JevError as err:
             _LOGGER.warning("TypeSafe did not answer: %s", err)
             return await self._fall_back(
-                user_input, f"TypeSafe did not answer: {err}", "unavailable"
+                user_input, chat_log, f"TypeSafe did not answer: {err}", "unavailable"
             )
 
         runtime.usage.record(response.usage.input_tokens, request_bytes)
@@ -435,7 +439,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             ),
         }
         state = {"command": pending.text, "reply": user_input.text}
-        response = await self._ask(user_input, state, questions)
+        response = await self._ask(user_input, chat_log, state, questions)
         if isinstance(response, conversation.ConversationResult):
             return response
 
@@ -483,7 +487,9 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         Only a brightness command with no digit in it sends this, so no other
         command pays for it. It sends the sentence alone: 403 to 568 input tokens.
         """
-        response = await self._ask(user_input, {"command": text}, level_questions())
+        response = await self._ask(
+            user_input, chat_log, {"command": text}, level_questions()
+        )
         if isinstance(response, conversation.ConversationResult):
             return response
         level = read_level(response, text, self._min_confidence, user_input.language)
@@ -525,7 +531,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             decision = read
 
         if decision.should_fall_back:
-            return await self._fall_back(user_input, decision.reason)
+            return await self._fall_back(user_input, chat_log, decision.reason)
 
         # The whole-home gate. "Turn everything off" is a real command and a
         # harmless one. "Turn everything on" at 3am, from a sentence the model was
@@ -551,14 +557,16 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
             # The model named something the intent layer could not find. That is a
             # miss, not a failure, so the fallback agent gets the sentence intact.
             _LOGGER.debug("intent %s matched nothing: %s", decision.intent_type, err)
-            return await self._fall_back(user_input, "the named target was not found")
+            return await self._fall_back(
+                user_input, chat_log, "the named target was not found"
+            )
         except ha_intent.IntentHandleError as err:
             # Home Assistant raises this only when no entity succeeded, so nothing
             # changed. A media player with no turn_off does this, and the fallback
             # agent may know another way to do what was asked.
             _LOGGER.debug("intent %s failed: %s", decision.intent_type, err)
             return await self._fall_back(
-                user_input, "the intent failed on every target", "intent_failed"
+                user_input, chat_log, "the intent failed on every target", "intent_failed"
             )
         except ha_intent.IntentError as err:
             _LOGGER.error("intent %s failed: %s", decision.intent_type, err)
@@ -705,8 +713,17 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                         conversation_agent_id=user_input.agent_id,
                     )
                 )
-            except skipped as err:
-                if len(runs) == 1:
+            except ha_intent.IntentError as err:
+                # Once a device has changed, the turn says what changed rather than
+                # ending in an error that sounds as if nothing did.
+                if responses:
+                    _LOGGER.warning(
+                        "intent %s failed on one target after another changed: %s",
+                        decision.intent_type,
+                        err,
+                    )
+                    continue
+                if len(runs) == 1 or not isinstance(err, skipped):
                     raise
                 missed = err
         if not responses:
@@ -739,6 +756,7 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
     async def _fall_back(
         self,
         user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
         why: str,
         line: str = "not_understood",
     ) -> conversation.ConversationResult:
@@ -758,10 +776,14 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
                 else ha_intent.IntentResponseErrorCode.FAILED_TO_HANDLE
             )
             return await self._speak(user_input, line, error=code)
+        # This agent's session id, as the pipeline passes it, so the fallback agent
+        # joins this conversation. The id the caller sent is None or an expired one
+        # when a client starts, and the fallback agent would then keep its own
+        # memory under an id the client never hears.
         result = await conversation.async_converse(
             self.hass,
             user_input.text,
-            user_input.conversation_id,
+            chat_log.conversation_id,
             user_input.context,
             language=user_input.language,
             agent_id=agent,
