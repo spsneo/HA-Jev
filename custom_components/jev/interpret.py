@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from homeassistant.helpers import intent as ha_intent
@@ -32,6 +32,7 @@ from jevclient import (
     ScoreAnswer,
 )
 
+from .memory import Turn
 from .snapshot import ExposedEntity, HomeSnapshot
 
 NONE = "none_of_these"
@@ -448,6 +449,15 @@ class Interpretation:
     # Every room a state question names, when it names more than one. Jev's area
     # question has one answer, and "the dining or living room" is two.
     rooms: list[str] = field(default_factory=list)
+    # "refers_back" or "same_again" when the sentence followed the last turn.
+    follow_up: str | None = None
+    # The remembered entity ids a refers_back acts on.
+    remembered: list[str] = field(default_factory=list)
+    # One slot set per remembered device when there are several, so each runs by
+    # its own name, domain and area. Empty otherwise.
+    each: list[dict[str, Any]] = field(default_factory=list)
+    # The entity id behind already_satisfied.
+    already_entity: str | None = None
 
     @property
     def should_fall_back(self) -> bool:
@@ -480,6 +490,30 @@ _SHAPE_CUES = (
     ("all", re.compile(r"\b(?:are|is) (?:all|every)\b|\beverything\b", re.IGNORECASE)),
     ("any", re.compile(r"\bany(?:thing)?\b", re.IGNORECASE)),
 )
+
+
+# The floor a follow-up answer needs. Not measured: no calibration run has been made
+# for the two follow-up questions yet, so it sits where SHAPE_FLOOR does. Acting on
+# the wrong remembered devices is a confident wrong action.
+FOLLOW_UP_FLOOR = 0.8
+# English words that point back or ask again. A cue never acts alone: it only lets
+# an answer between the agent's floor and FOLLOW_UP_FLOOR count.
+_REFERS_BACK_CUE = re.compile(
+    r"\b(?:it|them|those|they|that one|these|both)\b", re.IGNORECASE
+)
+_SAME_AGAIN_CUE = re.compile(
+    r"^\s*(?:and (?:in |for )?the|same for|what about the)\b", re.IGNORECASE
+)
+
+
+def refers_back_cue(text: str) -> bool:
+    """Whether the words point back to something already said."""
+    return _REFERS_BACK_CUE.search(text) is not None
+
+
+def same_again_cue(text: str) -> bool:
+    """Whether the sentence opens the way a repeat for somewhere else does."""
+    return _SAME_AGAIN_CUE.search(text) is not None
 
 
 def areas_named(text: str, snapshot: HomeSnapshot) -> list[str]:
@@ -534,13 +568,14 @@ def shape_cue(text: str) -> str | None:
 
 
 def build_questions(
-    text: str, snapshot: HomeSnapshot, max_options: int
+    text: str, snapshot: HomeSnapshot, max_options: int, *, follow_up: bool = False
 ) -> dict[str, Question]:
     """One request, every question the router could need.
 
     `background` carries the standing rules rather than the state, because the same
     sentence measured about twice as useful attached to the question as attached to
-    the readings.
+    the readings. follow_up adds the two questions that read a follow-up, when the
+    conversation has a last turn to follow.
     """
     entity_options: dict[str, Any] = {
         e.entity_id: e.as_option() for e in snapshot.entities[:max_options]
@@ -725,6 +760,21 @@ def build_questions(
             "Which kind of device is meant?",
             dict.fromkeys(snapshot.domains) | {NONE: "No particular kind"},
         )
+    # Only with a last turn, so a first sentence costs what it cost before.
+    if follow_up:
+        questions["refers_back"] = Noul(
+            "Does the command point back to the devices of the last turn, with "
+            "words such as them, it or those, rather than naming its own?",
+            true="It means the devices the last turn was about",
+            false="It names its own devices, room or floor, or none",
+        )
+        questions["same_again"] = Noul(
+            "Does the command ask for the same thing as the last turn, for a "
+            "different room or device?",
+            true="It repeats the last request for another room or device, such as "
+            "and the kitchen",
+            false="It asks for something of its own",
+        )
     return questions
 
 
@@ -736,11 +786,14 @@ def interpret(
     *,
     ask_back: bool = True,
     heard_in: str | None = None,
+    last: Turn | None = None,
 ) -> Interpretation:
     """Read the answers that matter and ignore the rest.
 
     ask_back=False reads a command whose device a reply has already picked.
     heard_in is the area id of the satellite or device that heard the command.
+    last is the turn this conversation remembers, when the request asked whether
+    the sentence follows it.
     """
 
     def choice(key: str) -> ChoiceAnswer | None:
@@ -783,6 +836,34 @@ def interpret(
     if _only_a_name(text, snapshot):
         return out("only a name, no action said")
 
+    # Both answers are read before either is used, because a sentence read both
+    # ways is not clear enough to act on, and then neither counts.
+    follow_up: str | None = None
+    if last is not None:
+        back = noul("refers_back") >= _follow_up_floor(
+            refers_back_cue(text), min_confidence
+        )
+        again = noul("same_again") >= _follow_up_floor(
+            same_again_cue(text), min_confidence
+        )
+        if back != again:
+            follow_up = "refers_back" if back else "same_again"
+    remembered: list[ExposedEntity] = []
+    if follow_up == "refers_back" and last is not None:
+        # A device removed or no longer exposed since the last turn is dropped, and
+        # with none left the sentence goes on as today.
+        remembered = [e for d in last.devices if (e := snapshot.by_id(d)) is not None]
+        if not remembered:
+            follow_up = None
+    elif follow_up == "same_again" and last is not None:
+        # Read before the action gate, because "and the living room?" says no
+        # action of its own and its action answer is a guess. The target still
+        # comes from this sentence, and without a sure one it is not a repeat.
+        if last.action in ACTIONS and _a_sure_target(response, min_confidence):
+            response = replace(response, answers=_repeated(response.answers, last))
+        else:
+            follow_up = None
+
     # A digit in a name is not a level: "lamp 2", "Bedroom 2".
     spoken = without_names(
         text,
@@ -819,10 +900,16 @@ def interpret(
         # answer to a sentence the model read correctly.
         # "turn on the lamp at 50%" with the lamp on is a new level, not done.
         # It came back as already on in 1 of 2 runs.
+        # "turn it on" names its one remembered device as surely as a name would.
+        asked_of = (
+            ChoiceAnswer(choice=remembered[0].entity_id, probabilities={}, confidence=1.0)
+            if len(remembered) == 1
+            else entity
+        )
         if (
             find_brightness(spoken, bare=False) is None
             and noul("bright") < 0.5
-            and (settled := _already_done(action, entity, snapshot, min_confidence))
+            and (settled := _already_done(action, asked_of, snapshot, min_confidence))
         ):
             return Interpretation(
                 None,
@@ -831,8 +918,9 @@ def interpret(
                 action.confidence,
                 "already satisfied",
                 fallback=False,
-                already_satisfied=settled,
+                already_satisfied=settled[:2],
                 action_probabilities=dict(action.probabilities or {}),
+                already_entity=settled[2],
             )
         return out(
             f"action confidence {action.confidence:.2f} below {min_confidence:.2f}"
@@ -851,7 +939,10 @@ def interpret(
     )
 
     if action.choice == "get_temperature":
-        return _temperature(
+        # HassGetTemperature reads one room or one climate device, from this
+        # sentence's answers, so a refers_back is not read here. A same_again has
+        # already put the last turn's action in place.
+        read = _temperature(
             out,
             text,
             action,
@@ -862,6 +953,9 @@ def interpret(
             heard_in,
             min_confidence,
         )
+        if follow_up == "same_again" and not read.should_fall_back:
+            read.follow_up = follow_up
+        return read
 
     def ask(first: ExposedEntity, second: ExposedEntity) -> Interpretation:
         # The action is sure and the device is one of two. Asking costs one short
@@ -907,6 +1001,7 @@ def interpret(
     # of one_room at 0.41 alongside a device answer at 1.00, where branching on
     # scope first threw away the certain answer and acted on the whole house.
     described: ExposedEntity | None = None
+    each: list[dict[str, Any]] = []
     # A command that names one device is not a command for its room. Reported:
     # "Włącz lampkę pod szafkami." scored its light at 0.52 and the kitchen at 0.89,
     # and every kitchen light came on. The room answer says where the device is.
@@ -915,7 +1010,17 @@ def interpret(
         and target.choice == "entity"
         and target.confidence >= min_confidence
     )
-    if (
+    if remembered and last is not None:
+        # The remembered devices, by the same slots a named device gets, so every
+        # rule below applies to them as to a name. The whole-house gate decides on
+        # a house-wide set as it would for "turn everything on".
+        targets_everything = last.everything
+        if len(remembered) == 1:
+            described = remembered[0]
+        else:
+            slots["domain"] = {"value": list(dict.fromkeys(e.domain for e in remembered))}
+            each = [_named_slots(e) for e in remembered]
+    elif (
         entity is not None
         and entity.choice != NONE
         and entity.confidence >= min_confidence
@@ -990,12 +1095,7 @@ def interpret(
         return out("no target named with enough confidence")
 
     if described is not None:
-        slots["name"] = {"value": described.slot_name}
-        # The domain keeps a same-named entity the model was never shown, a lock
-        # called "Front door" beside a cover called "Front door", out of the match.
-        slots["domain"] = {"value": [described.domain]}
-        if described.area_id:
-            slots["preferred_area_id"] = {"value": described.area_id}
+        slots.update(_named_slots(described))
 
     # An area or a floor always carries a domain. With none, Home Assistant acts on every
     # exposed entity in the room whatever its domain, so turn_off on a hallway with a
@@ -1010,6 +1110,14 @@ def interpret(
             and domain.confidence >= min_confidence
         ):
             slots["domain"] = {"value": [domain.choice]}
+        elif follow_up == "same_again" and (
+            kinds_again := [d for d in last.domains if d in snapshot.domains]
+            if last is not None
+            else []
+        ):
+            # "and the living room?" after a question about the lights is about
+            # the lights. A kind no longer exposed is not asked about.
+            slots["domain"] = {"value": kinds_again}
         elif not targets_everything or len(snapshot.domains) == 1:
             slots["domain"] = {"value": snapshot.domains}
 
@@ -1046,6 +1154,16 @@ def interpret(
             needs_level = True
         slots["domain"] = {"value": ["light"]}
 
+    # A brightness command bounds the domain to lights, and each remembered device
+    # is bounded the same way, so "set them to 40%" after a light and a fan sets the
+    # light and leaves the fan alone.
+    if each:
+        kinds = slots["domain"]["value"]
+        each = [s for s in each if s["domain"]["value"][0] in kinds]
+        remembered = [e for e in remembered if e.domain in kinds]
+        if not each:
+            return out("none of the remembered devices is of that kind")
+
     shape = asked_state = cue = None
     rooms: list[str] = []
     if action.choice == "get_state":
@@ -1078,7 +1196,54 @@ def interpret(
         asked_state=asked_state,
         shape_cue=cue,
         rooms=rooms,
+        follow_up=follow_up,
+        remembered=[e.entity_id for e in remembered],
+        each=each,
     )
+
+
+def _follow_up_floor(cued: bool, min_confidence: float) -> float:
+    """The floor a follow-up answer needs: lower when the words cue it.
+
+    A cue lowers the floor to the agent's own and never raises it.
+    """
+    return min(min_confidence, FOLLOW_UP_FLOOR) if cued else FOLLOW_UP_FLOOR
+
+
+def _a_sure_target(response: JevResponse, min_confidence: float) -> bool:
+    """Whether the sentence names a device, a room or a floor Jev is sure of."""
+    return any(
+        isinstance(answer := response.answers.get(key), ChoiceAnswer)
+        and answer.choice != NONE
+        and answer.confidence >= min_confidence
+        for key in ("entity", "area", "floor")
+    )
+
+
+def _repeated(answers: dict[str, Any], last: Turn) -> dict[str, Any]:
+    """The answers with the last turn's action, shape and asked state in place."""
+    repeated = dict(answers)
+    for key, value in (
+        ("action", last.action),
+        ("shape", last.shape),
+        ("asked_state", last.asked_state),
+    ):
+        if value is not None:
+            repeated[key] = ChoiceAnswer(
+                choice=value, probabilities={value: 1.0}, confidence=1.0
+            )
+    return repeated
+
+
+def _named_slots(device: ExposedEntity) -> dict[str, Any]:
+    """The slots that run an intent on one device by its name."""
+    slots: dict[str, Any] = {"name": {"value": device.slot_name}}
+    # The domain keeps a same-named entity the model was never shown, a lock
+    # called "Front door" beside a cover called "Front door", out of the match.
+    slots["domain"] = {"value": [device.domain]}
+    if device.area_id:
+        slots["preferred_area_id"] = {"value": device.area_id}
+    return slots
 
 
 def _shape(answer: ChoiceAnswer | None, text: str) -> tuple[str, str | None]:
@@ -1262,11 +1427,12 @@ def _already_done(
     entity: ChoiceAnswer | None,
     snapshot: HomeSnapshot,
     min_confidence: float,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str] | None:
     """What is already true, when a command would change nothing.
 
-    Reads the top option rather than the winning one, because a redundant command
-    spreads its probability without moving the ranking.
+    The entity's name, the state it is in, and its id. Reads the top option rather
+    than the winning one, because a redundant command spreads its probability
+    without moving the ranking.
     """
     if entity is None or entity.choice == NONE or entity.confidence < min_confidence:
         return None
@@ -1279,4 +1445,4 @@ def _already_done(
     described = snapshot.by_id(entity.choice)
     if described is None or described.state != wanted:
         return None
-    return described.name, wanted
+    return described.name, wanted, described.entity_id
