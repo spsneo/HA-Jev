@@ -506,8 +506,11 @@ _REFERS_BACK_CUE = re.compile(
 # opposite of what was meant. Unlike a cue, this decides alone: a refers_back is
 # not used, whatever its answer.
 _NEGATIVE_CUE = re.compile(r"\b(?:other|others|rest|remaining|except)\b", re.IGNORECASE)
+# A transcript often drops "the": "and in living room". "And" with nothing after it
+# but a word opens too many sentences that are not a repeat, "and turn off the fan".
 _SAME_AGAIN_CUE = re.compile(
-    r"^\s*(?:and (?:in |for )?the|same for|what about the)\b", re.IGNORECASE
+    r"^\s*(?:and (?:(?:in|for|on|at) (?:the )?|the )|(?:same for|what about|how about) )",
+    re.IGNORECASE,
 )
 
 

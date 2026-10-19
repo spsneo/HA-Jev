@@ -331,6 +331,41 @@ def test_the_cues():
     assert same_again_cue("what about the office")
     assert same_again_cue("same for the hall")
     assert not same_again_cue("turn off the hall and the kitchen")
+    # A transcript often drops "the".
+    for text in (
+        "and in living room",
+        "and for kitchen",
+        "and on the first floor",
+        "what about office",
+        "how about the hall",
+        "how about hall",
+    ):
+        assert same_again_cue(text), text
+    # "and" alone opens too many sentences that are not a repeat.
+    assert not same_again_cue("and turn off the fan")
+    assert not same_again_cue("and living room")
+
+
+def test_and_in_living_room_asks_the_last_question_again():
+    # "any light is on in the dining room" then "and in living room": the follow-up
+    # answer sits under the floor a sentence with no cue needs, and the room alone
+    # was read as a new question, answered with the full list.
+    decision = interpret(
+        answers(
+            action=c("get_state", 0.9),
+            target_type=c("area", 0.9),
+            area=c("Living Room", 0.9),
+            same_again=NoulAnswer(noul=0.7),
+        ),
+        "and in living room",
+        SNAPSHOT,
+        MIN,
+        last=turn(shape="any", asked_state="on"),
+    )
+    assert decision.follow_up == "same_again"
+    assert decision.shape == "any"
+    assert decision.asked_state == "on"
+    assert decision.slots["area"]["value"] == "Living Room"
 
 
 def test_a_level_for_them_leaves_out_what_is_not_a_light():

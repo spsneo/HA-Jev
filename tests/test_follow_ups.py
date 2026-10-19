@@ -255,7 +255,16 @@ async def test_set_it_to_40_after_turn_it_on(hass, home, calls, mock_client):
     assert calls == [("light.turn_on", "light.kitchen", {"brightness_pct": 40})]
 
 
-async def test_and_the_living_room(hass, home, calls, mock_client):
+@pytest.mark.parametrize(
+    ("text", "again"),
+    [
+        ("and the living room?", 0.9),
+        # A transcript with no "the", and a follow-up answer under the floor that a
+        # sentence with no cue needs: still the same short question.
+        ("and in living room", 0.7),
+    ],
+)
+async def test_and_the_living_room(hass, home, calls, mock_client, text, again):
     mock_client.ask.return_value = asked(shape=c("any"))
     first = await turn(hass, "are any lights on in the kids room")
     assert spoken(first).startswith("Yes, two: shelf and study table.")
@@ -266,9 +275,9 @@ async def test_and_the_living_room(hass, home, calls, mock_client):
         domain=c("none_of_these", 0.9),
         shape=c("list", 0.5),
         asked_state=c("none", 0.9),
-        same_again=NoulAnswer(noul=0.9),
+        same_again=NoulAnswer(noul=again),
     )
-    second = await turn(hass, "and the living room?", first.conversation_id)
+    second = await turn(hass, text, first.conversation_id)
     assert spoken(second) == "Yes, one: lamp."
     assert calls == []
 

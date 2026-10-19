@@ -172,9 +172,9 @@ How it works:
 - "Them" takes the action from the new sentence. "And the living room?" takes the
   question from the last turn and the target from the new one. Only a question is
   repeated, because a repeat of a command would change a device whenever a question
-  was misread as one. A repeat that does not open with "and the", "same for" or
-  "what about the" is used only when the new sentence reads as the same question
-  itself. A sentence that reads as both, or as neither, is not a follow-up and is
+  was misread as one. A repeat that does not open with "and the", "and in",
+  "and for", "same for", "what about" or "how about" is used only when the new
+  sentence reads as the same question itself, and Jev is sure it is a repeat. A sentence that reads as both, or as neither, is not a follow-up and is
   read on its own words.
 - A room or floor you name that does not hold the remembered devices wins over the
   memory, and a sentence that names its own device is not a follow-up.
