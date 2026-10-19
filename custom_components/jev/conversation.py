@@ -271,6 +271,13 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         if last is not None:
             followed = {
                 "last_said": last.text,
+                # How sure Jev was, so a follow-up that was not taken can be told
+                # apart from one it never saw.
+                **{
+                    key: answer.noul
+                    for key in ("refers_back", "same_again")
+                    if isinstance(answer := response.answers.get(key), NoulAnswer)
+                },
                 "remembered_names": [
                     described.name
                     for entity_id in decision.remembered
@@ -662,6 +669,12 @@ class JevConversationEntity(conversation.ConversationEntity, AbstractConversatio
         action = decision.action
         if decision.intent_type == ACTIONS["set_brightness"]:
             action = "set_brightness"
+        # A repeat keeps the question it repeats. "and the guest room?" asks nothing
+        # on its own, and with it as the last turn each repeat in a chain left Jev
+        # less sure, until a room was read as a new question with the full list.
+        last = self._memory.get(chat_log.conversation_id)
+        if decision.follow_up == "same_again" and last is not None:
+            text = last.text
         self._memory.remember(
             chat_log.conversation_id,
             Turn(

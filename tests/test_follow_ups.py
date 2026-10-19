@@ -282,6 +282,40 @@ async def test_and_the_living_room(hass, home, calls, mock_client, text, again):
     assert calls == []
 
 
+async def test_a_chain_of_repeats_keeps_the_question(hass, home, calls, mock_client):
+    # After "and the living room?", the next request said the last turn was "and
+    # the living room?", which asks nothing on its own. Each repeat moved Jev
+    # further from the question, until the room was read as a new question.
+    mock_client.ask.return_value = asked(shape=c("any"))
+    first = await turn(hass, "are any lights on in the kids room")
+
+    mock_client.ask.return_value = asked(
+        action=c("get_state", 0.9),
+        area=c("Living Room"),
+        domain=c("none_of_these", 0.9),
+        same_again=NoulAnswer(noul=0.9),
+    )
+    await turn(hass, "and the living room?", first.conversation_id)
+    await turn(hass, "and the living room?", first.conversation_id)
+    assert mock_client.state_seen["last_turn"]["said"] == (
+        "are any lights on in the kids room"
+    )
+    assert mock_client.state_seen["last_turn"]["where"] == ["Living Room"]
+    assert calls == []
+
+
+async def test_the_trace_records_the_follow_up_answers(hass, home, mock_client):
+    mock_client.ask.return_value = asked()
+    first = await turn(hass, "which lights are on in the kids room")
+    assert "same_again" not in home.runtime_data.conversation_traces[0]
+
+    mock_client.ask.return_value = follow(same_again=NoulAnswer(noul=0.1))
+    await turn(hass, "turn them off", first.conversation_id)
+    trace = home.runtime_data.conversation_traces[0]
+    assert trace["refers_back"] == 0.9
+    assert trace["same_again"] == 0.1
+
+
 @pytest.mark.parametrize(
     ("first_text", "first_answer"),
     [

@@ -184,7 +184,10 @@ How it works:
   listening for one more sentence with no wake word. It does not after an action, a
   full list or an answer that names nothing.
 - The Assist dialog shows a line under the reply, "Follow-up: refers back to ..." or
-  "Follow-up: same again as ...", and the trace in diagnostics records `follow_up`.
+  "Follow-up: same again as ...", and the trace in diagnostics records `follow_up`
+  and how sure Jev was of each reading, `refers_back` and `same_again`.
+- A repeat keeps the question it repeats, so after "and the dining room?" the last
+  turn is still "are any lights on in the living room", for the room just asked.
 
 Not handled, and sent to the fallback agent as before: a relative change such as
 "make it brighter", "the others", undo, and "and the office" after a command.
