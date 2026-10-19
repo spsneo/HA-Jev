@@ -287,6 +287,8 @@ async def test_and_the_living_room(hass, home, calls, mock_client):
 async def test_and_the_office_after_a_command_changes_nothing(
     hass, home, calls, mock_client, first_text, first_answer
 ):
+    # The kitchen case proves the guard. The brightness cases also fall back for want
+    # of a level, and pin that a level is not carried over from the record.
     # A command is not repeated for another room. The sentence goes on as it did
     # before memory, and here it is not sure of an action, so nothing changes.
     mock_client.ask.return_value = first_answer

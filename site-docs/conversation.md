@@ -153,7 +153,7 @@ a follow-up costs one call.
 | Turn on the kitchen light | Turn it off | The kitchen light turns off |
 | Turn on the kitchen light | Set it to 40% | The kitchen light goes to 40% |
 | Are any lights on in the kids room? "Yes, two: shelf and study table." | And the living room? | "Yes, one: lamp." The same question for the living room |
-| Turn off the lights in the kitchen | And the office | Not a follow-up: a command is never repeated, so this goes on as if there were no memory |
+| Turn off the lights in the kitchen | And the office | Not a follow-up: a command is never repeated, so the sentence is read on its own words |
 | Which curtains are closed? | Open it | The curtain the answer named opens |
 | Turn on the kitchen light | Is the office light on? | A new question, so the memory is not used |
 
@@ -174,8 +174,8 @@ How it works:
   repeated, because a repeat of a command would change a device whenever a question
   was misread as one. A repeat that does not open with "and the", "same for" or
   "what about the" is used only when the new sentence reads as the same question
-  itself. A sentence that reads as both, or as neither, is handled as if there were
-  no memory.
+  itself. A sentence that reads as both, or as neither, is not a follow-up and is
+  read on its own words.
 - A room or floor you name that does not hold the remembered devices wins over the
   memory, and a sentence that names its own device is not a follow-up.
 - A fallback, a refusal and the question "which device" leave the memory as it was, so
